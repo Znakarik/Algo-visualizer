@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- ARTIFACT-HEAD-START -->
+<title>Конструктор алгоритмов</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&family=Unbounded:wght@600&display=swap">
+<link rel="stylesheet" href="styles.css">
+<!-- ARTIFACT-HEAD-END -->
+</head>
+<body>
+<!-- ARTIFACT-BODY-START -->
+<header class="top">
+  <h1>
+    <svg class="logo" viewBox="0 0 28 28" aria-hidden="true">
+      <rect x="2" y="2" width="10" height="7" rx="2" fill="var(--t-input)"/>
+      <path d="M7 9v5M7 14l-4 5M7 14l4 5" stroke="var(--muted)" stroke-width="1.6" fill="none"/>
+      <rect x="0" y="19" width="6" height="6" rx="1.5" fill="var(--yes)"/>
+      <rect x="8" y="19" width="6" height="6" rx="1.5" fill="var(--no)"/>
+      <rect x="17" y="10" width="10" height="7" rx="2" fill="var(--accent)"/>
+    </svg>
+    Конструктор алгоритмов
+  </h1>
+  <p class="sub">Соберите алгоритм из блоков и пройдите его по шагам: что было на входе, что стало на выходе.</p>
+  <div class="toolbar">
+    <select id="preset" class="btn" aria-label="Пример алгоритма"></select>
+    <button id="btn-new" class="btn">Новый</button>
+    <button id="btn-io" class="btn">Импорт / экспорт</button>
+  </div>
+</header>
+
+<main class="layout">
+  <section class="panel" aria-labelledby="h-flow">
+    <div class="panel-head">
+      <h2 id="h-flow">Алгоритм</h2>
+      <span class="block-msg" id="block-count"></span>
+    </div>
+    <div id="editor" class="flow"></div>
+  </section>
+
+  <section class="panel viewer" aria-labelledby="h-steps">
+    <div class="panel-head"><h2 id="h-steps">Выполнение</h2></div>
+    <div id="summary" class="summary"></div>
+    <div class="player">
+      <button id="btn-first" class="btn" title="В начало" aria-label="В начало">⏮</button>
+      <button id="btn-prev" class="btn" title="Назад (←)" aria-label="Назад">←</button>
+      <button id="btn-play" class="btn primary" title="Пуск / пауза (пробел)">▶ Пуск</button>
+      <button id="btn-next" class="btn" title="Вперёд (→)" aria-label="Вперёд">→</button>
+      <input id="scrub" type="range" min="0" max="0" value="0" aria-label="Шаг">
+      <span id="counter" class="counter"></span>
+    </div>
+    <div id="step" class="step-card"></div>
+    <div id="timeline" class="timeline" aria-label="Все шаги"></div>
+    <div class="help">
+      <p>В выражениях: <code>x</code> — элемент, <code>i</code> — его номер, <code>data</code> — весь массив, <code>acc</code> — накопитель в свёртке.</p>
+      <p>Примеры: <code>x &gt; 10</code>, <code>x.age &gt;= 18</code>, <code>x.name.toUpperCase()</code>, <code>Math.max(acc, x)</code>, <code>typeof x === 'number'</code>.</p>
+    </div>
+  </section>
+</main>
+
+<div id="modal" class="modal-back" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-h">
+    <h3 id="modal-h">Импорт / экспорт схемы (JSON)</h3>
+    <textarea id="io-text" spellcheck="false" aria-label="Схема в формате JSON"></textarea>
+    <div class="row">
+      <span id="io-note" class="note">Скопируйте, чтобы сохранить, или вставьте свою схему и нажмите «Загрузить».</span>
+      <button id="io-copy" class="btn">Копировать</button>
+      <button id="io-load" class="btn primary">Загрузить</button>
+      <button id="io-close" class="btn ghost">Закрыть</button>
+    </div>
+  </div>
+</div>
+
+<script src="engine.js"></script>
+<script src="app.js"></script>
+<!-- ARTIFACT-BODY-END -->
+</body>
+</html>

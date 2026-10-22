@@ -1,0 +1,11 @@
+{
+  "name": "algo-visualizer",
+  "version": "0.1.0",
+  "description": "Конструктор и пошаговый визуализатор абстрактных алгоритмов из блоков",
+  "private": true,
+  "scripts": {
+    "test": "node --test --test-timeout=60000 tests/*.test.js",
+    "build": "node build.js"
+  },
+  "license": "MIT"
+}
