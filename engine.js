@@ -11,8 +11,10 @@
  * Типы блоков:
  *   input   — входные данные: параметры + массив
  *   filter  — оставить элементы, для которых условие верно
+ *             (take: 'all' — все совпавшие, 'first' — только первый совпавший)
  *   branch  — разделить по условию на ветки «да» и «нет», у каждой свои блоки;
- *             потом ветки сливаются (сначала «да», затем «нет»)
+ *             потом ветки сливаются (сначала «да», затем «нет»);
+ *             take: 'first' — в «да» идёт только первый совпавший, остальные в «нет»
  *   assert  — утверждение: условие должно быть верно для каждого элемента
  *   map     — преобразовать каждый элемент (выражение JS)
  *   sort    — отсортировать по ключу
@@ -341,8 +343,8 @@
     const emptyCond = () => ({ join: 'and', rules: [] });
     const defaults = {
       input:  { params: [], data: '[]' },
-      filter: { cond: emptyCond() },
-      branch: { cond: emptyCond(), yes: [], no: [] },
+      filter: { cond: emptyCond(), take: 'all' },
+      branch: { cond: emptyCond(), take: 'all', yes: [], no: [] },
       assert: { cond: emptyCond(), stopOnFail: false },
       map:    { expr: 'x' },
       sort:   { expr: 'x', order: 'asc' },
@@ -424,6 +426,13 @@
     return res;
   }
 
+  /** Режим «только первый»: совпавшие после первого помечаются как пропущенные. */
+  function markSkipped(step, res, firstIdx) {
+    res.forEach((r, i) => {
+      if (r.ok && i !== firstIdx) step.marks[i].status = 'skipped';
+    });
+  }
+
   function runBlock(block, data, ctx, depth, path) {
     if (!BLOCK_TYPES[block.type]) throw new AlgoError('Неизвестный тип блока: ' + block.type);
     const step = baseStep(block, data, depth, path);
@@ -444,9 +453,18 @@
 
         case 'filter': {
           const res = condMarks(block, data, ctx, step, 'kept', 'dropped');
-          const out = data.filter((_, i) => res[i].ok);
+          const first = block.take === 'first';
+          const firstIdx = first ? res.findIndex(r => r.ok) : -1;
+          if (first) markSkipped(step, res, firstIdx);
+          const out = first
+            ? (firstIdx >= 0 ? [data[firstIdx]] : [])
+            : data.filter((_, i) => res[i].ok);
+          step.take = first ? 'first' : 'all';
           step.after = clone(out);
-          step.message = 'Осталось ' + out.length + ' из ' + data.length;
+          const matched = res.filter(r => r.ok).length;
+          step.message = first
+            ? (firstIdx >= 0 ? 'Взят первый совпавший (№' + firstIdx + '), совпало всего ' + matched + ' из ' + data.length : 'Совпадений нет')
+            : 'Осталось ' + out.length + ' из ' + data.length;
           pushStep(ctx, step);
           return out;
         }
@@ -472,11 +490,17 @@
 
         case 'branch': {
           const res = condMarks(block, data, ctx, step, 'yes', 'no');
-          const yes = data.filter((_, i) => res[i].ok);
-          const no = data.filter((_, i) => !res[i].ok);
+          const first = block.take === 'first';
+          const firstIdx = first ? res.findIndex(r => r.ok) : -1;
+          if (first) markSkipped(step, res, firstIdx);
+          const toYes = i => (first ? i === firstIdx : res[i].ok);
+          const yes = data.filter((_, i) => toYes(i));
+          const no = data.filter((_, i) => !toYes(i));
+          step.take = first ? 'first' : 'all';
           step.after = clone(data);
           step.split = { yes: clone(yes), no: clone(no) };
-          step.message = 'Да: ' + yes.length + ', нет: ' + no.length;
+          step.message = 'Да: ' + yes.length + ', нет: ' + no.length +
+            (first && res.filter(r => r.ok).length > 1 ? ' (в «да» только первый совпавший, остальные совпавшие ушли в «нет»)' : '');
           pushStep(ctx, step);
 
           const prefix = path ? path + ' › ' : '';
@@ -558,6 +582,20 @@
   }
 
   // ---------- вспомогательное для интерфейса ----------
+  /** Копия алгоритма с другими значениями параметров (для сценариев). */
+  function withParams(blocks, values) {
+    const copy = clone(blocks);
+    const input = copy.find(b => b.type === 'input');
+    if (!input || !values) return copy;
+    input.params = input.params || [];
+    for (const [name, value] of Object.entries(values)) {
+      const p = input.params.find(q => q.name === name);
+      if (!p) throw new AlgoError('Сценарий задаёт неизвестный параметр «' + name + '»');
+      p.value = value;
+    }
+    return copy;
+  }
+
   /** Найти блок по id в дереве. */
   function findBlock(blocks, id) {
     for (let i = 0; i < blocks.length; i++) {
@@ -630,8 +668,14 @@
   }
 
   /** Обернуть алгоритм для сохранения в файл. */
-  function serialize(name, blocks) {
-    return { format: 'algo-visualizer', version: 2, name: name || 'Без названия', savedAt: new Date().toISOString(), blocks: clone(blocks) };
+  function serialize(name, blocks, extra) {
+    const out = { format: 'algo-visualizer', version: 2, name: name || 'Без названия', savedAt: new Date().toISOString() };
+    // необязательные поля файла сохраняются как есть (описание, источник, сценарии проверки)
+    for (const k of ['description', 'source', 'scenarios']) {
+      if (extra && extra[k] !== undefined) out[k] = clone(extra[k]);
+    }
+    out.blocks = clone(blocks);
+    return out;
   }
   /** Прочитать сохранённый алгоритм: файл формата serialize() или просто массив блоков. */
   function deserialize(obj) {
@@ -642,13 +686,15 @@
     const name = (!Array.isArray(obj) && obj && obj.name) || '';
     const errs = validate(blocks);
     if (errs.length) throw new AlgoError('Схема не подходит: ' + errs.slice(0, 3).join('; '));
-    return { name, blocks };
+    const extra = {};
+    if (!Array.isArray(obj)) for (const k of ['description', 'source', 'scenarios']) if (obj[k] !== undefined) extra[k] = obj[k];
+    return { name, blocks, extra };
   }
 
   return {
     BLOCK_TYPES, OPS, PARAM_TYPES, AlgoError,
     parseInput, parseConst, castParam, paramsObject, dateKey, compare, getPath, todayKey,
     evalRule, evalCond, ruleText, condText, rule,
-    createBlock, run, findBlock, fieldsOf, validate, serialize, deserialize,
+    createBlock, run, withParams, findBlock, fieldsOf, validate, serialize, deserialize,
   };
 });

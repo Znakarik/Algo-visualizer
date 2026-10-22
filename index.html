@@ -36,13 +36,14 @@
     <span class="lbl">Алгоритм</span>
     <input id="algo-name" type="text" placeholder="Название, например «Подбор карт для оплаты»" autocomplete="off">
   </label>
-  <button id="btn-save" class="btn primary" type="button" title="Сохранить в браузере (Cmd+S)">Сохранить</button>
+  <button id="btn-save" class="btn primary" type="button" title="Сохранить в список «Мои алгоритмы» (Cmd+S)">Сохранить</button>
   <select id="library" class="btn" aria-label="Сохранённые алгоритмы"></select>
   <button id="btn-delete" class="btn ghost" type="button">Удалить</button>
   <span class="sep" aria-hidden="true"></span>
-  <button id="btn-download" class="btn" type="button" title="Скачать алгоритм в .json-файл">Скачать файл</button>
-  <button id="btn-open-file" class="btn" type="button" title="Открыть .json-файл алгоритма">Открыть файл</button>
+  <button id="btn-download" class="btn" type="button" title="Сохранить алгоритм во внешний файл .algo.json">Сохранить в файл</button>
+  <button id="btn-open-file" class="btn" type="button" title="Открыть файл .algo.json">Открыть файл</button>
   <input id="file-input" type="file" accept=".json,application/json" hidden>
+  <span id="file-link" class="file-link" hidden></span>
   <span id="save-state" class="save-state" role="status"></span>
 </section>
 

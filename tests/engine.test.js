@@ -157,6 +157,51 @@ test('пример с числами (выражения JS)', () => {
   assert.deepEqual(r.output, [79]);
 });
 
+// ---------- «только первый совпавший» ----------
+
+test('фильтр «только первая»: берёт первую совпавшую карту, порядок важен', () => {
+  const blocks = X.byKey.cards.make();
+  // сортируем по балансу до фильтра, чтобы «первая» = с наибольшим балансом
+  blocks.splice(1, 0, B('sort', { expr: 'x.balance', order: 'desc' }));
+  blocks.push(B('filter', { label: 'Одна карта', take: 'first', cond: { join: 'and', rules: [R('field', 'balance', 'gte', 'const', '1000')] } }));
+  const r = run(blocks);
+  assert.deepEqual(names(r), ['Зарплатная']);
+  const step = r.steps.at(-1);
+  assert.equal(step.take, 'first');
+  assert.deepEqual(step.marks.map(m => m.status), ['kept', 'skipped']);
+  assert.match(step.message, /Взят первый совпавший \(№0\), совпало всего 2 из 2/);
+});
+
+test('фильтр «только первая»: нет совпадений — пустой результат', () => {
+  const r = run([
+    B('input', { data: '[1, 2, 3]' }),
+    B('filter', { take: 'first', condMode: 'code', expr: 'x > 10' }),
+  ]);
+  assert.deepEqual(r.output, []);
+  assert.equal(r.steps[1].message, 'Совпадений нет');
+});
+
+test('фильтр «все» — поведение по умолчанию', () => {
+  const r = run([B('input', { data: '[1, 2, 3]' }), B('filter', { condMode: 'code', expr: 'x > 1' })]);
+  assert.deepEqual(r.output, [2, 3]);
+  assert.equal(r.steps[1].take, 'all');
+});
+
+test('ветвление «только первая»: в «да» первый совпавший, остальные в «нет»', () => {
+  const r = run([
+    B('input', { data: '[1, 4, 6, 3, 8]' }),
+    B('branch', {
+      take: 'first', condMode: 'code', expr: 'x % 2 === 0',
+      yes: [B('map', { expr: '"выбран " + x' })],
+      no: [],
+    }),
+  ]);
+  assert.deepEqual(r.steps[1].split, { yes: [4], no: [1, 6, 3, 8] });
+  assert.deepEqual(r.steps[1].marks.map(m => m.status), ['no', 'yes', 'skipped', 'no', 'skipped']);
+  assert.deepEqual(r.output, ['выбран 4', 1, 6, 3, 8]);
+  assert.match(r.steps[1].message, /только первый совпавший/);
+});
+
 // ---------- общие механизмы ----------
 
 test('выражения видят параметры через p', () => {

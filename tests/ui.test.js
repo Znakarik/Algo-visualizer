@@ -13,8 +13,12 @@ try { ({ chromium } = require('playwright')); } catch (_) { /* нет playwright
 const url = 'file://' + path.join(__dirname, '..', 'index.html');
 const skip = !chromium && 'playwright не установлен';
 
-async function openPage(browser, ctx) {
+// По умолчанию отключаем системные окна выбора файла: в автотесте их некому закрыть.
+const NO_PICKERS = () => { delete window.showSaveFilePicker; delete window.showOpenFilePicker; };
+
+async function openPage(browser, ctx, init) {
   const page = await (ctx || browser).newPage({ viewport: { width: 1280, height: 900 } });
+  await page.addInitScript(init || NO_PICKERS);
   const errors = [];
   page.on('pageerror', e => errors.push(e.message));
   page.on('console', m => { if (m.type() === 'error' && !/ERR_|Failed to load resource/.test(m.text())) errors.push(m.text()); });
@@ -149,6 +153,113 @@ test('сохранение: в браузере и в файл', { skip }, async
   assert.ok(!(await page.locator('#library option').allTextContents()).some(t => t.startsWith('Подбор карт')));
 
   fs.unlinkSync(file);
+  assert.deepEqual(errors, []);
+  await browser.close();
+});
+
+test('«только первая совпавшая» в фильтре и ветвлении', { skip }, async () => {
+  const browser = await chromium.launch();
+  const { page, errors } = await openPage(browser);
+  // в примере после фильтров остаются Зарплатная и Мир; на последнем фильтре берём только первую
+  const f = page.locator('.block.t-filter').nth(3);
+  await f.locator('select.take-select').selectOption('first');
+  await page.waitForFunction(() => /Результат \(1\): Зарплатная/.test(document.querySelector('#summary').textContent));
+  await page.locator('.block.t-filter').nth(3).locator('.type-tag').click();
+  assert.equal(await page.locator('#step tr.row-skipped').count(), 1);
+  // в блоках без выбора режима не должно появляться лишнего текста
+  assert.doesNotMatch(await page.textContent('#editor'), /null|undefined/);
+  assert.match(await page.textContent('#step'), /совпал, не первый/);
+
+  // ветвление: в «да» уходит одна карта
+  await page.selectOption('#preset', 'cardsBranch');
+  await page.waitForSelector('.block.t-branch');
+  await page.locator('.block.t-branch select.take-select').first().selectOption('first');
+  await page.locator('.block.t-branch .type-tag').first().click();
+  assert.match(await page.textContent('#step'), /Да: 1, нет: 3/);
+  assert.deepEqual(errors, []);
+  await browser.close();
+});
+
+test('внешний файл: выбранный файл перезаписывается при каждом сохранении (Chrome)', { skip }, async () => {
+  const browser = await chromium.launch();
+  // подменяем системное окно выбора файла: файл «живёт» в window.__files
+  const fakePickers = () => {
+    window.__files = {};
+    const handle = name => ({
+      name,
+      async createWritable() { let buf = ''; return { async write(d) { buf += d; }, async close() { window.__files[name] = buf; } }; },
+      async getFile() { const t = window.__files[name]; return { name, text: async () => t }; },
+    });
+    window.showSaveFilePicker = async opts => handle(opts.suggestedName);
+    window.showOpenFilePicker = async () => [handle('Подбор карт.algo.json')];
+  };
+  const { page, errors } = await openPage(browser, null, fakePickers);
+  await page.fill('#algo-name', 'Подбор карт');
+  await page.click('#btn-download');
+  await page.waitForFunction(() => !!window.__files['Подбор карт.algo.json']);
+  assert.match(await page.textContent('#file-link'), /файл: Подбор карт\.algo\.json/);
+  assert.equal(await page.textContent('#btn-download'), 'Записать в файл');
+
+  // меняем параметр и жмём «Сохранить» — файл обновляется
+  await page.locator('#params-panel input[type=number]').first().fill('777');
+  await page.click('#btn-save');
+  await page.waitForFunction(() => /777/.test(window.__files['Подбор карт.algo.json']));
+  const saved = JSON.parse(await page.evaluate(() => window.__files['Подбор карт.algo.json']));
+  assert.equal(saved.blocks[0].params.find(p => p.name === 'minAmount').value, 777);
+
+  // открываем другой пример (файл отвязывается), потом открываем файл снова
+  await page.selectOption('#preset', 'numbers');
+  assert.equal(await page.isHidden('#file-link'), true);
+  await page.click('#btn-open-file');
+  await page.waitForFunction(() => document.querySelector('#algo-name').value === 'Подбор карт');
+  assert.equal(await page.isVisible('#file-link'), true);
+  assert.deepEqual(errors, []);
+  await browser.close();
+});
+
+test('claude.ai: список алгоритмов в хранилище страницы, файл через платформу', { skip }, async () => {
+  const browser = await chromium.launch();
+  // подменяем возможности claude.ai: db (в памяти) и downloads
+  const fakeClaude = () => {
+    delete window.showSaveFilePicker; delete window.showOpenFilePicker;
+    const store = (window.__db = { algorithms: {} });
+    const listeners = [];
+    const snap = () => ({ docs: Object.entries(store.algorithms).map(([id, v]) => ({ id, exists: true, data: () => v })) });
+    const emit = () => listeners.forEach(fn => fn(snap()));
+    const db = {
+      collection: p => ({
+        doc: id => ({
+          async set(v) { store[p][id] = JSON.parse(JSON.stringify(v)); setTimeout(emit, 0); },
+          async delete() { delete store[p][id]; setTimeout(emit, 0); },
+        }),
+        onSnapshot(fn) { listeners.push(fn); setTimeout(() => fn(snap()), 0); return () => {}; },
+      }),
+    };
+    window.__downloads = [];
+    const downloads = { async save(r) { window.__downloads.push(r); return { status: 'saved' }; } };
+    window.claude = { use: async name => (name === 'db' ? db : name === 'downloads' ? downloads : null) };
+  };
+  const { page, errors } = await openPage(browser, null, fakeClaude);
+  await page.waitForFunction(() => window.__db !== undefined);
+
+  await page.fill('#algo-name', 'Подбор карт');
+  await page.click('#btn-save');
+  await page.waitForFunction(() => Object.values(window.__db.algorithms).some(v => v.name === 'Подбор карт'));
+  const doc = await page.evaluate(() => Object.values(window.__db.algorithms)[0]);
+  assert.equal(JSON.parse(doc.blocks)[0].type, 'input');
+  await page.waitForFunction(() => [...document.querySelectorAll('#library option')].some(o => o.textContent.startsWith('Подбор карт')));
+
+  // файл — через платформу, с правильным именем
+  await page.click('#btn-download');
+  await page.waitForFunction(() => window.__downloads.length === 1);
+  const dl = await page.evaluate(() => window.__downloads[0]);
+  assert.equal(dl.filename, 'Подбор карт.algo.json');
+  assert.equal(JSON.parse(dl.data).name, 'Подбор карт');
+
+  // удаление из хранилища
+  await page.click('#btn-delete');
+  await page.click('#btn-delete');
+  await page.waitForFunction(() => Object.keys(window.__db.algorithms).length === 0);
   assert.deepEqual(errors, []);
   await browser.close();
 });

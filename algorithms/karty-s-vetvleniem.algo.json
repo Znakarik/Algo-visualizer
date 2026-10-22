@@ -2,10 +2,33 @@
   "format": "algo-visualizer",
   "version": 2,
   "name": "Карты с ветвлением",
-  "savedAt": "2026-10-22T08:23:37.599Z",
+  "savedAt": "2026-10-22T08:51:48.536Z",
+  "description": "Кредитные и дебетовые карты проверяются по разным порогам.",
+  "scenarios": [
+    {
+      "name": "кредитные запрещены",
+      "params": {
+        "creditAllowed": false
+      },
+      "expect": [
+        "4276 •• 1111",
+        "2200 •• 6666"
+      ]
+    },
+    {
+      "name": "высокий минимум для дебетовых",
+      "params": {
+        "minAmount": 10000
+      },
+      "expect": [
+        "5536 •• 2222",
+        "4276 •• 1111"
+      ]
+    }
+  ],
   "blocks": [
     {
-      "id": "imvj9xw1r8",
+      "id": "imvjay4s88",
       "type": "input",
       "label": "Карты клиента",
       "params": [
@@ -28,7 +51,7 @@
       "data": "[\n {\n  \"id\": \"4276 •• 1111\",\n  \"name\": \"Зарплатная\",\n  \"type\": \"debit\",\n  \"balance\": 15000,\n  \"expires\": \"2027-03\",\n  \"currency\": \"RUB\",\n  \"blocked\": false\n },\n {\n  \"id\": \"5536 •• 2222\",\n  \"name\": \"Кредитка Platinum\",\n  \"type\": \"credit\",\n  \"balance\": 120000,\n  \"expires\": \"2028-11\",\n  \"currency\": \"RUB\",\n  \"blocked\": false\n },\n {\n  \"id\": \"2200 •• 3333\",\n  \"name\": \"Старая дебетовая\",\n  \"type\": \"debit\",\n  \"balance\": 800,\n  \"expires\": \"2025-08\",\n  \"currency\": \"RUB\",\n  \"blocked\": false\n },\n {\n  \"id\": \"4111 •• 4444\",\n  \"name\": \"Кредитка Travel\",\n  \"type\": \"credit\",\n  \"balance\": 3000,\n  \"expires\": \"2027-01\",\n  \"currency\": \"USD\",\n  \"blocked\": false\n },\n {\n  \"id\": \"2202 •• 5555\",\n  \"name\": \"Накопительная\",\n  \"type\": \"debit\",\n  \"balance\": 56000,\n  \"expires\": \"2026-12\",\n  \"currency\": \"RUB\",\n  \"blocked\": true\n },\n {\n  \"id\": \"2200 •• 6666\",\n  \"name\": \"Мир\",\n  \"type\": \"debit\",\n  \"balance\": 7300,\n  \"expires\": \"2029-05\",\n  \"currency\": \"RUB\",\n  \"blocked\": false\n }\n]"
     },
     {
-      "id": "fmvj9xw1r9",
+      "id": "fmvjay4s89",
       "type": "filter",
       "label": "Действующие",
       "cond": {
@@ -57,10 +80,11 @@
             }
           }
         ]
-      }
+      },
+      "take": "all"
     },
     {
-      "id": "bmvj9xw1rd",
+      "id": "bmvjay4s8d",
       "type": "branch",
       "label": "Кредитная?",
       "cond": {
@@ -79,9 +103,10 @@
           }
         ]
       },
+      "take": "all",
       "yes": [
         {
-          "id": "fmvj9xw1ra",
+          "id": "fmvjay4s8a",
           "type": "filter",
           "label": "Кредитные разрешены",
           "cond": {
@@ -99,10 +124,11 @@
                 }
               }
             ]
-          }
+          },
+          "take": "all"
         },
         {
-          "id": "fmvj9xw1rb",
+          "id": "fmvjay4s8b",
           "type": "filter",
           "label": "Лимит не меньше порога",
           "cond": {
@@ -120,12 +146,13 @@
                 }
               }
             ]
-          }
+          },
+          "take": "all"
         }
       ],
       "no": [
         {
-          "id": "fmvj9xw1rc",
+          "id": "fmvjay4s8c",
           "type": "filter",
           "label": "Баланс ≥ минимума",
           "cond": {
@@ -143,7 +170,8 @@
                 }
               }
             ]
-          }
+          },
+          "take": "all"
         }
       ]
     }

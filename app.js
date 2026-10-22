@@ -13,6 +13,7 @@
     name: '',          // название текущего алгоритма
     blocks: [],
     savedJson: null,   // как выглядел алгоритм при последнем сохранении (для «есть изменения»)
+    extra: {},         // необязательные поля файла: description, source, scenarios
     result: null,
     stepIndex: 0,
     playing: false,
@@ -31,19 +32,86 @@
   function storeSet(key, value) {
     try { localStorage.setItem(key, JSON.stringify(value)); return true; } catch (_) { return false; }
   }
-  function library() { return storeGet(KEY_LIBRARY, {}) || {}; }
+  // ---------- где хранятся сохранённые алгоритмы ----------
+  // В опубликованной версии (claude.ai) — хранилище страницы (db): переживает
+  // перезагрузки и открывается с любого устройства. Всегда дублируется
+  // в память браузера, а без хранилища (страница открыта как файл) — только там.
+  const cloud = { db: null, downloads: null, lib: null };
+  function localLibrary() { return storeGet(KEY_LIBRARY, {}) || {}; }
+  function library() { return cloud.lib || localLibrary(); }
+  function docIdFor(name) {
+    let h = 0x811c9dc5;
+    for (const ch of new TextEncoder().encode(name)) { h ^= ch; h = Math.imul(h, 0x01000193) >>> 0; }
+    return 'a' + h.toString(16).padStart(8, '0');
+  }
+  async function initCapabilities() {
+    const c = window.claude;
+    if (!c || typeof c.use !== 'function') return;
+    c.use('downloads').then(d => { cloud.downloads = d; }, () => {});
+    let db = null;
+    try { db = await c.use('db'); } catch (_) { db = null; }
+    if (!db) return;
+    cloud.db = db;
+    try {
+      db.collection('algorithms').onSnapshot(snap => {
+        const lib = {};
+        for (const d of snap.docs) {
+          const v = d.data();
+          if (!v || typeof v.name !== 'string') continue;
+          try { lib[v.name] = { blocks: JSON.parse(v.blocks), extra: v.extra ? JSON.parse(v.extra) : {}, savedAt: v.savedAt }; } catch (_) { /* битая запись */ }
+        }
+        const first = cloud.lib === null;
+        cloud.lib = lib;
+        if (first) migrateLocal(lib);
+        renderLibrary();
+      }, () => { cloud.db = null; cloud.lib = null; renderLibrary(); });
+    } catch (_) { cloud.db = null; }
+  }
+  /** Перенести в хранилище то, что раньше сохранялось только в браузере. */
+  async function migrateLocal(lib) {
+    for (const [name, e] of Object.entries(localLibrary())) {
+      if (lib[name] || !Array.isArray(e.blocks)) continue;
+      try { await cloudWrite(name, e.blocks, e.extra, e.savedAt); } catch (_) { return; }
+    }
+  }
+  async function cloudWrite(name, blocks, extra, savedAt) {
+    await cloud.db.collection('algorithms').doc(docIdFor(name)).set({
+      name, blocks: JSON.stringify(blocks), extra: JSON.stringify(extra || {}), savedAt: savedAt || new Date().toISOString(),
+    });
+  }
+  async function writeEntry(name, blocks, extra) {
+    const savedAt = new Date().toISOString();
+    const lib = localLibrary();
+    lib[name] = { blocks, extra: extra || {}, savedAt };
+    const localOk = storeSet(KEY_LIBRARY, lib);
+    if (cloud.db && cloud.lib) {
+      await cloudWrite(name, blocks, extra, savedAt);
+      cloud.lib = Object.assign({}, cloud.lib, { [name]: { blocks: JSON.parse(JSON.stringify(blocks)), extra: JSON.parse(JSON.stringify(extra || {})), savedAt } });
+      return;
+    }
+    if (!localOk) throw new Error('local');
+  }
+  async function removeEntry(name) {
+    const lib = localLibrary();
+    delete lib[name];
+    storeSet(KEY_LIBRARY, lib);
+    if (cloud.db && cloud.lib) {
+      await cloud.db.collection('algorithms').doc(docIdFor(name)).delete();
+      const next = Object.assign({}, cloud.lib); delete next[name]; cloud.lib = next;
+    }
+  }
 
   function loadInitial() {
     const cur = storeGet(KEY_CURRENT, null);
     if (cur && Array.isArray(cur.blocks) && E.validate(cur.blocks).length === 0) {
-      return { name: cur.name || '', blocks: cur.blocks, savedJson: cur.savedJson || null };
+      return { name: cur.name || '', blocks: cur.blocks, extra: cur.extra || {}, savedJson: cur.savedJson || null };
     }
     const legacy = storeGet(LEGACY_KEY, null);
     if (Array.isArray(legacy) && E.validate(legacy).length === 0) return { name: '', blocks: legacy, savedJson: null };
     return { name: '', blocks: X.byKey.cards.make(), savedJson: null };
   }
   function persistCurrent() {
-    storeSet(KEY_CURRENT, { name: state.name, blocks: state.blocks, savedJson: state.savedJson });
+    storeSet(KEY_CURRENT, { name: state.name, blocks: state.blocks, extra: state.extra, savedJson: state.savedJson });
   }
 
   // ---------- утилиты ----------
@@ -373,6 +441,19 @@
     return p ? p.type : null;
   }
 
+  /** «Все совпавшие» или «только первая совпавшая» (для фильтра и ветвления). */
+  function takeRow(b) {
+    if (b.type !== 'filter' && b.type !== 'branch') return null;
+    const branch = b.type === 'branch';
+    const sel = el('select', { class: 'take-select', 'aria-label': 'Сколько совпавших брать',
+      onchange: e => { b.take = e.target.value; changed({ now: true, rerender: true }); } },
+      option('all', 'все совпавшие', b.take !== 'first'),
+      option('first', 'только первая совпавшая', b.take === 'first'));
+    return el('label', { class: 'take-row' },
+      el('span', { class: 'kw', text: branch ? 'в «Да» идут' : 'результат:' }), sel,
+      el('span', { class: 'block-msg', text: b.take === 'first' ? (branch ? 'остальные совпавшие уходят в «Нет»' : 'порядок элементов важен: сортировка выше по схеме') : '' }));
+  }
+
   function renderCondBody(card, b, caption) {
     const code = b.condMode === 'code' || (!b.cond && typeof b.expr === 'string');
     if (!b.cond) b.cond = { join: 'and', rules: [] };
@@ -389,6 +470,7 @@
 
     if (code) {
       card.append(el('div', { class: 'cond-head' }, el('span', { class: 'cond-caption', text: caption }), modeSwitch));
+      const tr = takeRow(b); if (tr) card.append(tr);
       card.append(exprField(b, 'условие', 'x.balance >= p.minAmount', 'expr'));
       card.append(el('div', { class: 'block-msg', text: 'x — элемент, p — параметры, i — номер, data — весь массив' }));
       return;
@@ -402,6 +484,7 @@
     card.append(el('div', { class: 'cond-head' },
       el('span', { class: 'cond-caption' }, caption + ' ', b.cond.rules.length > 1 ? joinSel : null),
       modeSwitch));
+    const tr = takeRow(b); if (tr) card.append(tr);
 
     const rules = el('div', { class: 'rules' });
     b.cond.rules.forEach((r, i) => {
@@ -692,7 +775,7 @@
   }
 
   const STATUS_TEXT = {
-    kept: 'проходит', dropped: 'отброшен', pass: 'верно', fail: 'нарушено',
+    kept: 'проходит', dropped: 'отброшен', pass: 'верно', fail: 'нарушено', skipped: 'совпал, не первый',
     yes: 'да', no: 'нет', new: '', changed: '', moved: '', folded: '',
   };
 
@@ -867,24 +950,35 @@
     flash.t = setTimeout(updateSaveState, 2500);
   }
 
-  function saveToLibrary() {
-    const name = $('algo-name').value.trim();
+  async function saveToLibrary() {
+    let name = $('algo-name').value.trim();
+    if (!name && fileHandle) { name = fileHandle.name.replace(/(\.algo)?\.json$/i, ''); $('algo-name').value = name; }
     if (!name) { $('algo-name').focus(); flash('Введите название, чтобы сохранить', true); return; }
-    const lib = library();
-    lib[name] = { blocks: state.blocks, savedAt: new Date().toISOString() };
-    if (!storeSet(KEY_LIBRARY, lib)) { flash('Браузер не дал сохранить. Скачайте файл.', true); return; }
     state.name = name;
+    try {
+      await writeEntry(name, state.blocks, state.extra);
+    } catch (_) {
+      flash('Не получилось сохранить в список. Сохраните файлом.', true);
+      return;
+    }
     state.savedJson = currentJson();
     persistCurrent();
     updateSaveState();
+    if (fileHandle) {
+      try { await writeToHandle(fileHandle); flash('Сохранено: ' + name + ' и файл ' + fileHandle.name); return; }
+      catch (_) { unlinkFile(); flash('Сохранено в список, но файл записать не удалось', true); return; }
+    }
     flash('Сохранено: ' + name);
   }
 
-  function openAlgorithm(name, blocks, savedJson) {
+  function openAlgorithm(name, blocks, savedJson, handle, extra) {
     stop();
+    state.extra = extra || {};
     state.name = name || '';
     state.blocks = blocks;
     state.savedJson = savedJson === undefined ? null : savedJson;
+    fileHandle = handle || null;
+    updateFileButtons();
     $('algo-name').value = state.name;
     persistCurrent();
     renderEditor();
@@ -894,7 +988,7 @@
   }
 
   let deleteArmed = null;
-  function deleteFromLibrary() {
+  async function deleteFromLibrary() {
     const lib = library();
     if (!state.name || !lib[state.name]) return;
     const btn = $('btn-delete');
@@ -905,54 +999,123 @@
       setTimeout(() => { deleteArmed = null; btn.textContent = 'Удалить'; btn.classList.remove('danger'); }, 3000);
       return;
     }
-    delete lib[state.name];
-    storeSet(KEY_LIBRARY, lib);
     deleteArmed = null;
     btn.textContent = 'Удалить';
     btn.classList.remove('danger');
     const removed = state.name;
+    try { await removeEntry(removed); } catch (_) { flash('Не получилось удалить', true); return; }
     state.savedJson = null;
     persistCurrent();
     updateSaveState();
     flash('Удалён из списка: ' + removed);
   }
 
+  // ---------- внешний файл ----------
+  // 1) В claude.ai: сохранение файла через платформу (с подтверждением).
+  // 2) В Chrome/Edge, открытых локально: выбранный файл запоминается,
+  //    и «Сохранить» дальше перезаписывает его же.
+  // 3) Иначе: обычное скачивание.
+  let fileHandle = null;
   function fileName() {
     const base = (state.name || 'алгоритм').replace(/[\\/:*?"<>|]+/g, '_').trim() || 'алгоритм';
     return base + '.algo.json';
   }
-  function downloadFile() {
-    const data = JSON.stringify(E.serialize(state.name || 'Без названия', state.blocks), null, 2);
-    try {
-      const url = URL.createObjectURL(new Blob([data], { type: 'application/json' }));
-      const a = el('a', { href: url, download: fileName() });
-      document.body.append(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 2000);
-      flash('Файл: ' + fileName());
-    } catch (_) {
-      openIO();
+  function fileJson() {
+    return JSON.stringify(E.serialize(state.name || 'Без названия', state.blocks, state.extra), null, 2) + '\n';
+  }
+  async function writeToHandle(h) {
+    const w = await h.createWritable();
+    await w.write(fileJson());
+    await w.close();
+  }
+  function unlinkFile() { fileHandle = null; updateFileButtons(); }
+  function updateFileButtons() {
+    $('btn-download').textContent = fileHandle ? 'Записать в файл' : 'Сохранить в файл';
+    const link = $('file-link');
+    link.hidden = !fileHandle;
+    if (fileHandle) {
+      link.replaceChildren(
+        el('span', { text: 'файл: ' + fileHandle.name }),
+        el('button', { type: 'button', class: 'icon-btn', title: 'Отвязать файл', 'aria-label': 'Отвязать файл', html: ICONS.del, onclick: unlinkFile }));
     }
+  }
+  function blobDownload(data) {
+    const url = URL.createObjectURL(new Blob([data], { type: 'application/json' }));
+    const a = el('a', { href: url, download: fileName() });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }
+
+  async function downloadFile() {
+    if (fileHandle) {
+      try { await writeToHandle(fileHandle); flash('Записано в файл ' + fileHandle.name); return; }
+      catch (_) { unlinkFile(); }
+    }
+    const data = fileJson();
+    if (cloud.downloads) {
+      try {
+        await cloud.downloads.save({ filename: fileName(), data });
+        flash('Файл сохранён: ' + fileName());
+      } catch (e) {
+        if (e && e.code === 'declined') flash('Сохранение файла отменено');
+        else if (e && e.code === 'rate_limited') flash('Подождите пару секунд и попробуйте ещё раз', true);
+        else { flash('Файл сохранить не удалось: скопируйте JSON', true); openIO(); }
+      }
+      return;
+    }
+    if (typeof window.showSaveFilePicker === 'function') {
+      try {
+        const h = await window.showSaveFilePicker({
+          suggestedName: fileName(),
+          types: [{ description: 'Алгоритм', accept: { 'application/json': ['.json'] } }],
+        });
+        await writeToHandle(h);
+        fileHandle = h;
+        updateFileButtons();
+        flash('Сохранено в ' + h.name + '. Дальше «Сохранить» обновляет этот файл.');
+        return;
+      } catch (e) {
+        if (e && e.name === 'AbortError') return;
+        // выбор файла запрещён в этой среде — скачиваем обычным способом
+      }
+    }
+    try { blobDownload(data); flash('Файл: ' + fileName()); } catch (_) { openIO(); }
+  }
+
+  function openFileText(text, displayName, handle) {
+    try {
+      const { name, blocks, extra } = E.deserialize(text);
+      const n = (name && name !== 'Без названия') ? name : displayName.replace(/(\.algo)?\.json$/i, '');
+      openAlgorithm(n, blocks, null, handle, extra);
+      flash('Открыт файл: ' + displayName + (handle ? '. «Сохранить» будет обновлять его.' : ''));
+    } catch (e) {
+      flash(e.message, true);
+    }
+  }
+  async function pickFileToOpen() {
+    if (typeof window.showOpenFilePicker === 'function' && !cloud.db) {
+      try {
+        const [h] = await window.showOpenFilePicker({ types: [{ description: 'Алгоритм', accept: { 'application/json': ['.json'] } }] });
+        const f = await h.getFile();
+        openFileText(await f.text(), f.name, h);
+        return;
+      } catch (e) {
+        if (e && e.name === 'AbortError') return;
+      }
+    }
+    $('file-input').click();
   }
   function openFile(file) {
     const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const { name, blocks } = E.deserialize(String(reader.result));
-        const n = name || file.name.replace(/(\.algo)?\.json$/i, '');
-        openAlgorithm(n, blocks, null);
-        flash('Открыт файл: ' + file.name);
-      } catch (e) {
-        flash(e.message, true);
-      }
-    };
+    reader.onload = () => openFileText(String(reader.result), file.name, null);
     reader.readAsText(file);
   }
 
   // ----- окно JSON -----
   function openIO() {
-    $('io-text').value = JSON.stringify(E.serialize(state.name || 'Без названия', state.blocks), null, 2);
+    $('io-text').value = JSON.stringify(E.serialize(state.name || 'Без названия', state.blocks, state.extra), null, 2);
     setNote('Скопируйте, чтобы сохранить, или вставьте свой алгоритм и нажмите «Загрузить».');
     $('modal').hidden = false;
     $('io-text').focus();
@@ -970,7 +1133,7 @@
       if (!sel.value) return;
       const ex = X.byKey[sel.value];
       sel.value = '';
-      openAlgorithm('', ex.make(), null);
+      openAlgorithm('', ex.make(), null, null, ex.extra);
     });
 
     $('btn-new').addEventListener('click', () => {
@@ -990,11 +1153,11 @@
       if (!name) return;
       const entry = library()[name];
       if (!entry) return;
-      openAlgorithm(name, JSON.parse(JSON.stringify(entry.blocks)), JSON.stringify(entry.blocks));
+      openAlgorithm(name, JSON.parse(JSON.stringify(entry.blocks)), JSON.stringify(entry.blocks), null, JSON.parse(JSON.stringify(entry.extra || {})));
       flash('Открыт: ' + name);
     });
     $('btn-download').addEventListener('click', downloadFile);
-    $('btn-open-file').addEventListener('click', () => $('file-input').click());
+    $('btn-open-file').addEventListener('click', pickFileToOpen);
     $('file-input').addEventListener('change', e => {
       const f = e.target.files && e.target.files[0];
       if (f) openFile(f);
@@ -1011,9 +1174,9 @@
     });
     $('io-load').addEventListener('click', () => {
       try {
-        const { name, blocks } = E.deserialize($('io-text').value);
+        const { name, blocks, extra } = E.deserialize($('io-text').value);
         $('modal').hidden = true;
-        openAlgorithm(name === 'Без названия' ? '' : name, blocks, null);
+        openAlgorithm(name === 'Без названия' ? '' : name, blocks, null, null, extra);
       } catch (e) { setNote(e.message, true); }
     });
 
@@ -1035,7 +1198,8 @@
     });
 
     const initial = loadInitial();
-    openAlgorithm(initial.name, initial.blocks, initial.savedJson);
+    openAlgorithm(initial.name, initial.blocks, initial.savedJson, null, initial.extra);
+    initCapabilities();
   }
 
   init();

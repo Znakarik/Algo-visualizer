@@ -426,4 +426,17 @@ button { cursor: pointer; }
 .cond-line { margin: 0; font-size: 12px; }
 .cond-line .kw { color: var(--muted); }
 
+/* ---------- «только первая» и внешний файл ---------- */
+.take-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+.take-row .kw { font-family: var(--font-mono); font-size: 12px; color: var(--muted); }
+.take-select { font-size: 13px; border: 1px solid var(--line); border-radius: 5px; padding: 4px 6px; background: var(--bg); }
+.trace-table tr.row-skipped td { background: var(--warn-soft); }
+.tag.skipped { color: var(--t-branch); }
+.chip.skipped { background: var(--warn-soft); border-color: var(--t-branch); }
+.file-link {
+  display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-family: var(--font-mono);
+  background: var(--accent-soft); color: var(--accent); border-radius: 999px; padding: 1px 4px 1px 10px;
+}
+.file-link .icon-btn { width: 20px; height: 20px; }
+
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
