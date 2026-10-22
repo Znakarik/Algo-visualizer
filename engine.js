@@ -19,6 +19,10 @@
  *   map     — преобразовать каждый элемент (выражение JS)
  *   sort    — отсортировать по ключу
  *   reduce  — свернуть массив в одно значение
+ *   return  — ранний возврат (как return в Java): если сработал, весь алгоритм
+ *             сразу заканчивается с указанным результатом, даже изнутри ветки.
+ *             «Совпавшие» — элементы, для которых верно условие (без правил — все).
+ *             trigger: always | ifMatched | ifNone; value: matched | first | all | empty
  *
  * Условие (у filter, branch, assert) задаётся одним из двух способов:
  *   1) правилами, которые накликиваются в интерфейсе:
@@ -47,6 +51,7 @@
     map:    { title: 'Преобразование', hasCond: false, hasExpr: true  },
     sort:   { title: 'Сортировка',     hasCond: false, hasExpr: true  },
     reduce: { title: 'Свёртка',        hasCond: false, hasExpr: true  },
+    return: { title: 'Возврат',        hasCond: true,  hasExpr: false },
   };
 
   const OPS = {
@@ -61,6 +66,20 @@
     isFalse:  { label: 'нет (false)', unary: true },
     isEmpty:  { label: 'не задано',  unary: true  },
     notEmpty: { label: 'задано',     unary: true  },
+  };
+
+  /** Когда срабатывает «Возврат» (по множеству совпавших элементов). */
+  const RETURN_TRIGGERS = {
+    always: 'всегда',
+    ifMatched: 'если есть совпавшие',
+    ifNone: 'если совпавших нет',
+  };
+  /** Что возвращает «Возврат». */
+  const RETURN_VALUES = {
+    matched: 'совпавшие',
+    first: 'первую совпавшую',
+    all: 'весь текущий список',
+    empty: 'пустой список',
   };
 
   const PARAM_TYPES = {
@@ -349,6 +368,7 @@
       map:    { expr: 'x' },
       sort:   { expr: 'x', order: 'asc' },
       reduce: { expr: 'acc + x', init: '0' },
+      return: { cond: emptyCond(), trigger: 'ifMatched', value: 'matched' },
     };
     if (!BLOCK_TYPES[type]) throw new AlgoError('Неизвестный тип блока: ' + type);
     return Object.assign({ id: newId(type[0]), type, label: '' }, clone(defaults[type]), overrides || {});
@@ -365,6 +385,7 @@
     const ctx = {
       steps: [], opts, stopped: false, error: null, failed: false,
       params: {}, today: opts.today || todayKey(),
+      returned: null, // {value, stepIndex, blockId} после сработавшего «Возврата»
     };
     let output = [];
     try {
@@ -373,6 +394,16 @@
       if (!(e instanceof AlgoError)) throw e;
       ctx.error = e.message;
     }
+    if (ctx.returned) output = ctx.returned.value;
+    // блоки, до которых выполнение не дошло (после возврата, остановки или ошибки)
+    const executed = new Set(ctx.steps.map(s => s.blockId));
+    const notRun = [];
+    (function walk(list) {
+      for (const b of list || []) {
+        if (!executed.has(b.id)) notRun.push(b.id);
+        if (b.type === 'branch') { walk(b.yes); walk(b.no); }
+      }
+    })(blocks);
     return {
       ok: !ctx.error && !ctx.failed,
       output: clone(output),
@@ -380,6 +411,8 @@
       today: ctx.today,
       steps: ctx.steps,
       error: ctx.error,
+      returned: ctx.returned ? { stepIndex: ctx.returned.stepIndex, blockId: ctx.returned.blockId } : null,
+      notRun,
     };
   }
 
@@ -521,6 +554,36 @@
           return merged;
         }
 
+        case 'return': {
+          const res = condMarks(block, data, ctx, step, 'match', 'nomatch');
+          const trigger = block.trigger || 'ifMatched';
+          const what = block.value || 'matched';
+          if (!RETURN_TRIGGERS[trigger]) throw new AlgoError('Неизвестное «когда» у возврата: ' + trigger);
+          if (!RETURN_VALUES[what]) throw new AlgoError('Неизвестное «что вернуть» у возврата: ' + what);
+          const matched = data.filter((_, i) => res[i].ok);
+          const fires = trigger === 'always' || (trigger === 'ifMatched' ? matched.length > 0 : matched.length === 0);
+          step.trigger = trigger;
+          step.returnValue = what;
+          step.fired = fires;
+          if (!fires) {
+            step.after = clone(data);
+            step.message = 'Не сработал (' + RETURN_TRIGGERS[trigger] + ': совпало ' + matched.length + ' из ' + data.length + '), продолжаем';
+            pushStep(ctx, step);
+            return data;
+          }
+          let value;
+          if (what === 'matched') value = matched;
+          else if (what === 'first') value = matched.slice(0, 1);
+          else if (what === 'all') value = data;
+          else value = [];
+          step.after = clone(value);
+          step.message = 'Возврат: ' + RETURN_VALUES[what] + ' (' + value.length + '), алгоритм завершён';
+          pushStep(ctx, step);
+          ctx.returned = { value: clone(value), stepIndex: step.index, blockId: block.id };
+          ctx.stopped = true;
+          return value;
+        }
+
         case 'map': {
           const out = data.map((x, i) => {
             const y = evaluate(block.expr, ['x', 'i', 'data', 'p'], [x, i, data, ctx.params]);
@@ -582,10 +645,11 @@
   }
 
   // ---------- вспомогательное для интерфейса ----------
-  /** Копия алгоритма с другими значениями параметров (для сценариев). */
-  function withParams(blocks, values) {
+  /** Копия алгоритма с другими значениями параметров и, если задано, другими элементами (для сценариев). */
+  function withParams(blocks, values, data) {
     const copy = clone(blocks);
     const input = copy.find(b => b.type === 'input');
+    if (input && data !== undefined) input.data = typeof data === 'string' ? data : JSON.stringify(data);
     if (!input || !values) return copy;
     input.params = input.params || [];
     for (const [name, value] of Object.entries(values)) {
@@ -655,12 +719,16 @@
         const info = BLOCK_TYPES[b.type];
         if (!info) { errors.push(at + ': неизвестный тип «' + b.type + '»'); return; }
         if (info.hasExpr && typeof b.expr !== 'string') errors.push(at + ': нет выражения');
-        if (info.hasCond) {
+        if (info.hasCond && !(b.type === 'return' && !b.cond && b.expr === undefined)) {
           const okCode = b.condMode === 'code' ? typeof b.expr === 'string' : true;
           const okCond = b.cond ? Array.isArray(b.cond.rules) : typeof b.expr === 'string';
           if (!okCode || !okCond) errors.push(at + ': нет условия');
         }
         if (b.type === 'input' && b.params && !Array.isArray(b.params)) errors.push(at + ': params должен быть списком');
+        if (b.type === 'return') {
+          if (b.trigger !== undefined && !RETURN_TRIGGERS[b.trigger]) errors.push(at + ': trigger должен быть ' + Object.keys(RETURN_TRIGGERS).join(' | '));
+          if (b.value !== undefined && !RETURN_VALUES[b.value]) errors.push(at + ': value должен быть ' + Object.keys(RETURN_VALUES).join(' | '));
+        }
         if (b.type === 'branch') { walk(b.yes || [], at + '.yes'); walk(b.no || [], at + '.no'); }
       });
     })(blocks, 'blocks');
@@ -692,7 +760,7 @@
   }
 
   return {
-    BLOCK_TYPES, OPS, PARAM_TYPES, AlgoError,
+    BLOCK_TYPES, OPS, PARAM_TYPES, RETURN_TRIGGERS, RETURN_VALUES, AlgoError,
     parseInput, parseConst, castParam, paramsObject, dateKey, compare, getPath, todayKey,
     evalRule, evalCond, ruleText, condText, rule,
     createBlock, run, withParams, findBlock, fieldsOf, validate, serialize, deserialize,

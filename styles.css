@@ -18,6 +18,7 @@
   --t-assert: #b8325a;
   --t-sort: #2f7d3b;
   --t-reduce: #8a6d10;
+  --t-return: #9c2fa8;
 
   /* состояния элементов */
   --ok: #1d8a4a;
@@ -42,7 +43,7 @@
     --bg: #0f1322; --paper: #171c2f; --ink: #e6e9f5; --muted: #9aa3c0; --line: #2c3450;
     --grid: rgba(120, 145, 255, 0.07); --accent: #8ea2ff; --accent-soft: #232c52;
     --t-input: #9aa5c8; --t-filter: #3cc3cf; --t-map: #b393ff; --t-branch: #f0a14e;
-    --t-assert: #ff7ba0; --t-sort: #6fcf7d; --t-reduce: #e2c454;
+    --t-assert: #ff7ba0; --t-sort: #6fcf7d; --t-reduce: #e2c454; --t-return: #e98af2;
     --ok: #5ad48a; --ok-soft: #173826; --bad: #ff7287; --bad-soft: #3d1a22;
     --yes: #79b0ff; --yes-soft: #1b2c4a; --no: #f0a860; --no-soft: #3a2a17; --warn-soft: #3b3313;
     color-scheme: dark;
@@ -52,7 +53,7 @@
   --bg: #0f1322; --paper: #171c2f; --ink: #e6e9f5; --muted: #9aa3c0; --line: #2c3450;
   --grid: rgba(120, 145, 255, 0.07); --accent: #8ea2ff; --accent-soft: #232c52;
   --t-input: #9aa5c8; --t-filter: #3cc3cf; --t-map: #b393ff; --t-branch: #f0a14e;
-  --t-assert: #ff7ba0; --t-sort: #6fcf7d; --t-reduce: #e2c454;
+  --t-assert: #ff7ba0; --t-sort: #6fcf7d; --t-reduce: #e2c454; --t-return: #e98af2;
   --ok: #5ad48a; --ok-soft: #173826; --bad: #ff7287; --bad-soft: #3d1a22;
   --yes: #79b0ff; --yes-soft: #1b2c4a; --no: #f0a860; --no-soft: #3a2a17; --warn-soft: #3b3313;
   color-scheme: dark;
@@ -136,6 +137,7 @@ button { cursor: pointer; }
 .block.t-assert { --c: var(--t-assert); }
 .block.t-sort { --c: var(--t-sort); }
 .block.t-reduce { --c: var(--t-reduce); }
+.block.t-return { --c: var(--t-return); }
 .block.active { box-shadow: 0 0 0 3px var(--accent-soft), 0 0 0 4px var(--accent); }
 .block.has-error { border-color: var(--bad); border-left-color: var(--bad); }
 .block.has-fail { background: linear-gradient(var(--bad-soft), var(--bad-soft)) padding-box; }
@@ -438,5 +440,20 @@ button { cursor: pointer; }
   background: var(--accent-soft); color: var(--accent); border-radius: 999px; padding: 1px 4px 1px 10px;
 }
 .file-link .icon-btn { width: 20px; height: 20px; }
+
+/* ---------- ранний возврат ---------- */
+.ret-row { display: flex; align-items: center; gap: 6px 8px; flex-wrap: wrap; font-size: 13px; }
+.ret-row .kw { font-family: var(--font-mono); font-size: 12px; color: var(--muted); }
+.ret-select { font-size: 13px; border: 1px solid var(--line); border-radius: 5px; padding: 4px 6px; background: var(--bg); font-weight: 500; }
+.block.not-run { opacity: .45; border-style: dashed; }
+.block.not-run.active { opacity: 1; }
+.block.returned { box-shadow: 0 0 0 2px var(--t-return); }
+.pill.ret { background: color-mix(in srgb, var(--t-return) 16%, transparent); color: var(--t-return); border: 0; cursor: pointer; }
+span.pill.ret { cursor: default; }
+.ret-summary { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+.trace-table tr.row-match td { background: var(--ok-soft); }
+.tag.match { color: var(--ok); }
+.tag.nomatch { color: var(--muted); }
+.timeline .st.ret { background: var(--t-return); box-shadow: 0 0 0 2px color-mix(in srgb, var(--t-return) 30%, transparent); }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }

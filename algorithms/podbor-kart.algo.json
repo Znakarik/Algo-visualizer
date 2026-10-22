@@ -2,7 +2,7 @@
   "format": "algo-visualizer",
   "version": 2,
   "name": "Подбор карт",
-  "savedAt": "2026-10-22T08:51:48.534Z",
+  "savedAt": "2026-10-22T09:09:55.468Z",
   "description": "Подбор карт для оплаты: действующие, не заблокированные, кредитные только если разрешены, с балансом не меньше минимального.",
   "scenarios": [
     {
@@ -40,7 +40,7 @@
   ],
   "blocks": [
     {
-      "id": "imvjay4s61",
+      "id": "imvjblfgs1",
       "type": "input",
       "label": "Карты клиента",
       "params": [
@@ -63,7 +63,7 @@
       "data": "[\n {\n  \"id\": \"4276 •• 1111\",\n  \"name\": \"Зарплатная\",\n  \"type\": \"debit\",\n  \"balance\": 15000,\n  \"expires\": \"2027-03\",\n  \"currency\": \"RUB\",\n  \"blocked\": false\n },\n {\n  \"id\": \"5536 •• 2222\",\n  \"name\": \"Кредитка Platinum\",\n  \"type\": \"credit\",\n  \"balance\": 120000,\n  \"expires\": \"2028-11\",\n  \"currency\": \"RUB\",\n  \"blocked\": false\n },\n {\n  \"id\": \"2200 •• 3333\",\n  \"name\": \"Старая дебетовая\",\n  \"type\": \"debit\",\n  \"balance\": 800,\n  \"expires\": \"2025-08\",\n  \"currency\": \"RUB\",\n  \"blocked\": false\n },\n {\n  \"id\": \"4111 •• 4444\",\n  \"name\": \"Кредитка Travel\",\n  \"type\": \"credit\",\n  \"balance\": 3000,\n  \"expires\": \"2027-01\",\n  \"currency\": \"USD\",\n  \"blocked\": false\n },\n {\n  \"id\": \"2202 •• 5555\",\n  \"name\": \"Накопительная\",\n  \"type\": \"debit\",\n  \"balance\": 56000,\n  \"expires\": \"2026-12\",\n  \"currency\": \"RUB\",\n  \"blocked\": true\n },\n {\n  \"id\": \"2200 •• 6666\",\n  \"name\": \"Мир\",\n  \"type\": \"debit\",\n  \"balance\": 7300,\n  \"expires\": \"2029-05\",\n  \"currency\": \"RUB\",\n  \"blocked\": false\n }\n]"
     },
     {
-      "id": "fmvjay4s62",
+      "id": "fmvjblfgs2",
       "type": "filter",
       "label": "Срок не истёк",
       "cond": {
@@ -85,7 +85,7 @@
       "take": "all"
     },
     {
-      "id": "fmvjay4s63",
+      "id": "fmvjblfgs3",
       "type": "filter",
       "label": "Не заблокирована",
       "cond": {
@@ -107,7 +107,7 @@
       "take": "all"
     },
     {
-      "id": "fmvjay4s64",
+      "id": "fmvjblfgs4",
       "type": "filter",
       "label": "Кредитные разрешены?",
       "cond": {
@@ -140,7 +140,7 @@
       "take": "all"
     },
     {
-      "id": "fmvjay4s65",
+      "id": "fmvjblfgs5",
       "type": "filter",
       "label": "Хватает минимальной суммы",
       "cond": {
@@ -173,7 +173,7 @@
       "take": "all"
     },
     {
-      "id": "amvjay4s66",
+      "id": "amvjblfgs6",
       "type": "assert",
       "label": "Все карты в рублях",
       "cond": {
@@ -195,7 +195,7 @@
       "stopOnFail": false
     },
     {
-      "id": "smvjay4s67",
+      "id": "smvjblfgs7",
       "type": "sort",
       "label": "Сначала с большим балансом",
       "expr": "x.balance",

@@ -90,6 +90,40 @@
       ],
     },
     {
+      key: 'cardsReturn',
+      title: 'Пример: ранние возвраты',
+      extra: {
+        description: 'Как метод на Java с несколькими return: пустой список, предпочтённая карта, дебетовые с достаточным балансом, иначе кредитные (если разрешены).',
+        scenarios: [
+          { name: 'есть дебетовые с балансом', params: {}, expect: ['4276 •• 1111', '2200 •• 6666'] },
+          { name: 'выбрана предпочтённая карта', params: { preferredId: '5536 •• 2222' }, expect: ['5536 •• 2222'] },
+          { name: 'дебетовых не хватает, кредитные запрещены', params: { minAmount: 20000 }, expect: [] },
+          { name: 'дебетовых не хватает, кредитные разрешены', params: { minAmount: 20000, creditAllowed: true }, expect: ['5536 •• 2222', '4111 •• 4444'] },
+          { name: 'карт нет', params: {}, data: [], expect: [] },
+        ],
+      },
+      make: () => [
+        B('input', {
+          label: 'Карты клиента',
+          params: [
+            { name: 'creditAllowed', type: 'boolean', value: false },
+            { name: 'preferredId', type: 'string', value: '' },
+            { name: 'minAmount', type: 'number', value: 5000 },
+          ],
+          data: JSON.stringify(CARDS, null, 1),
+        }),
+        B('return', { label: 'Карт нет: вернуть пустой', trigger: 'ifNone', value: 'empty', cond: { join: 'and', rules: [] } }),
+        B('filter', { label: 'Действующие', cond: { join: 'and', rules: [R('field', 'expires', 'gte', 'today'), R('field', 'blocked', 'isFalse')] } }),
+        B('return', { label: 'Есть предпочтённая: вернуть её', trigger: 'ifMatched', value: 'first', cond: { join: 'and', rules: [R('field', 'id', 'eq', 'param', 'preferredId')] } }),
+        B('return', {
+          label: 'Есть дебетовые с балансом: вернуть их', trigger: 'ifMatched', value: 'matched',
+          cond: { join: 'and', rules: [R('field', 'type', 'eq', 'const', 'debit'), R('field', 'balance', 'gte', 'param', 'minAmount')] },
+        }),
+        B('return', { label: 'Кредитные запрещены: вернуть пустой', trigger: 'ifMatched', value: 'empty', cond: { join: 'and', rules: [R('param', 'creditAllowed', 'isFalse')] } }),
+        B('filter', { label: 'Остаются кредитные', cond: { join: 'and', rules: [R('field', 'type', 'eq', 'const', 'credit')] } }),
+      ],
+    },
+    {
       key: 'numbers',
       title: 'Пример: числа и выражения',
       make: () => [

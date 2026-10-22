@@ -1,0 +1,221 @@
+{
+  "format": "algo-visualizer",
+  "version": 2,
+  "name": "Ранние возвраты",
+  "savedAt": "2026-10-22T09:09:55.471Z",
+  "description": "Как метод на Java с несколькими return: пустой список, предпочтённая карта, дебетовые с достаточным балансом, иначе кредитные (если разрешены).",
+  "scenarios": [
+    {
+      "name": "есть дебетовые с балансом",
+      "params": {},
+      "expect": [
+        "4276 •• 1111",
+        "2200 •• 6666"
+      ]
+    },
+    {
+      "name": "выбрана предпочтённая карта",
+      "params": {
+        "preferredId": "5536 •• 2222"
+      },
+      "expect": [
+        "5536 •• 2222"
+      ]
+    },
+    {
+      "name": "дебетовых не хватает, кредитные запрещены",
+      "params": {
+        "minAmount": 20000
+      },
+      "expect": []
+    },
+    {
+      "name": "дебетовых не хватает, кредитные разрешены",
+      "params": {
+        "minAmount": 20000,
+        "creditAllowed": true
+      },
+      "expect": [
+        "5536 •• 2222",
+        "4111 •• 4444"
+      ]
+    },
+    {
+      "name": "карт нет",
+      "params": {},
+      "data": [],
+      "expect": []
+    }
+  ],
+  "blocks": [
+    {
+      "id": "imvjblfgve",
+      "type": "input",
+      "label": "Карты клиента",
+      "params": [
+        {
+          "name": "creditAllowed",
+          "type": "boolean",
+          "value": false
+        },
+        {
+          "name": "preferredId",
+          "type": "string",
+          "value": ""
+        },
+        {
+          "name": "minAmount",
+          "type": "number",
+          "value": 5000
+        }
+      ],
+      "data": "[\n {\n  \"id\": \"4276 •• 1111\",\n  \"name\": \"Зарплатная\",\n  \"type\": \"debit\",\n  \"balance\": 15000,\n  \"expires\": \"2027-03\",\n  \"currency\": \"RUB\",\n  \"blocked\": false\n },\n {\n  \"id\": \"5536 •• 2222\",\n  \"name\": \"Кредитка Platinum\",\n  \"type\": \"credit\",\n  \"balance\": 120000,\n  \"expires\": \"2028-11\",\n  \"currency\": \"RUB\",\n  \"blocked\": false\n },\n {\n  \"id\": \"2200 •• 3333\",\n  \"name\": \"Старая дебетовая\",\n  \"type\": \"debit\",\n  \"balance\": 800,\n  \"expires\": \"2025-08\",\n  \"currency\": \"RUB\",\n  \"blocked\": false\n },\n {\n  \"id\": \"4111 •• 4444\",\n  \"name\": \"Кредитка Travel\",\n  \"type\": \"credit\",\n  \"balance\": 3000,\n  \"expires\": \"2027-01\",\n  \"currency\": \"USD\",\n  \"blocked\": false\n },\n {\n  \"id\": \"2202 •• 5555\",\n  \"name\": \"Накопительная\",\n  \"type\": \"debit\",\n  \"balance\": 56000,\n  \"expires\": \"2026-12\",\n  \"currency\": \"RUB\",\n  \"blocked\": true\n },\n {\n  \"id\": \"2200 •• 6666\",\n  \"name\": \"Мир\",\n  \"type\": \"debit\",\n  \"balance\": 7300,\n  \"expires\": \"2029-05\",\n  \"currency\": \"RUB\",\n  \"blocked\": false\n }\n]"
+    },
+    {
+      "id": "rmvjblfgvf",
+      "type": "return",
+      "label": "Карт нет: вернуть пустой",
+      "cond": {
+        "join": "and",
+        "rules": []
+      },
+      "trigger": "ifNone",
+      "value": "empty"
+    },
+    {
+      "id": "fmvjblfgvg",
+      "type": "filter",
+      "label": "Действующие",
+      "cond": {
+        "join": "and",
+        "rules": [
+          {
+            "left": {
+              "kind": "field",
+              "name": "expires"
+            },
+            "op": "gte",
+            "right": {
+              "kind": "today",
+              "value": ""
+            }
+          },
+          {
+            "left": {
+              "kind": "field",
+              "name": "blocked"
+            },
+            "op": "isFalse",
+            "right": {
+              "kind": "const",
+              "value": ""
+            }
+          }
+        ]
+      },
+      "take": "all"
+    },
+    {
+      "id": "rmvjblfgvh",
+      "type": "return",
+      "label": "Есть предпочтённая: вернуть её",
+      "cond": {
+        "join": "and",
+        "rules": [
+          {
+            "left": {
+              "kind": "field",
+              "name": "id"
+            },
+            "op": "eq",
+            "right": {
+              "kind": "param",
+              "name": "preferredId"
+            }
+          }
+        ]
+      },
+      "trigger": "ifMatched",
+      "value": "first"
+    },
+    {
+      "id": "rmvjblfgvi",
+      "type": "return",
+      "label": "Есть дебетовые с балансом: вернуть их",
+      "cond": {
+        "join": "and",
+        "rules": [
+          {
+            "left": {
+              "kind": "field",
+              "name": "type"
+            },
+            "op": "eq",
+            "right": {
+              "kind": "const",
+              "value": "debit"
+            }
+          },
+          {
+            "left": {
+              "kind": "field",
+              "name": "balance"
+            },
+            "op": "gte",
+            "right": {
+              "kind": "param",
+              "name": "minAmount"
+            }
+          }
+        ]
+      },
+      "trigger": "ifMatched",
+      "value": "matched"
+    },
+    {
+      "id": "rmvjblfgvj",
+      "type": "return",
+      "label": "Кредитные запрещены: вернуть пустой",
+      "cond": {
+        "join": "and",
+        "rules": [
+          {
+            "left": {
+              "kind": "param",
+              "name": "creditAllowed"
+            },
+            "op": "isFalse",
+            "right": {
+              "kind": "const",
+              "value": ""
+            }
+          }
+        ]
+      },
+      "trigger": "ifMatched",
+      "value": "empty"
+    },
+    {
+      "id": "fmvjblfgvk",
+      "type": "filter",
+      "label": "Остаются кредитные",
+      "cond": {
+        "join": "and",
+        "rules": [
+          {
+            "left": {
+              "kind": "field",
+              "name": "type"
+            },
+            "op": "eq",
+            "right": {
+              "kind": "const",
+              "value": "credit"
+            }
+          }
+        ]
+      },
+      "take": "all"
+    }
+  ]
+}

@@ -101,3 +101,19 @@ test('withParams не меняет исходный алгоритм', () => {
   assert.equal(copy[0].params[0].value, true);
   assert.equal(blocks[0].params[0].value, false);
 });
+
+test('возвраты: несработавший возврат и недостижимые блоки — предупреждения; data в сценарии', () => {
+  const ex = X.byKey.cardsReturn;
+  // без сценариев: «карт нет» не срабатывает, блоки после возврата дебетовых не выполняются
+  const bare = write('ret-bare.algo.json', E.serialize('r', ex.make(), {}));
+  const w = validate(bare).report[0].warnings.join('\n');
+  assert.match(w, /Карт нет: вернуть пустой: возврат ни разу не сработал/);
+  assert.match(w, /Остаются кредитные: не выполнялся ни в одном запуске/);
+
+  // со сценариями из примера (включая «карт нет» с data: []) всё покрыто
+  const full = write('ret-full.algo.json', E.serialize('r', ex.make(), ex.extra));
+  const { code, report } = validate(full);
+  assert.equal(code, 0, report[0].errors.join('\n'));
+  assert.doesNotMatch(report[0].warnings.join('\n'), /ни разу не сработал|не выполнялся/);
+  assert.deepEqual(report[0].scenarios.find(s => s.name === 'карт нет').output, []);
+});

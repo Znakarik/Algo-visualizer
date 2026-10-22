@@ -263,3 +263,46 @@ test('claude.ai: список алгоритмов в хранилище стр�
   assert.deepEqual(errors, []);
   await browser.close();
 });
+
+test('ранний возврат: блок, отметки невыполненных блоков, переход к шагу возврата', { skip }, async () => {
+  const browser = await chromium.launch();
+  const { page, errors } = await openPage(browser);
+  await page.selectOption('#preset', 'cardsReturn');
+  await page.waitForSelector('.block.t-return');
+  assert.equal(await page.locator('.block.t-return').count(), 4);
+
+  // по умолчанию срабатывает возврат дебетовых на 5-м шаге, два блока после него серые
+  await page.waitForFunction(() => /возврат на шаге 5/.test(document.querySelector('#summary').textContent));
+  assert.match(await summary(page), /Результат \(2\): Зарплатная, Мир/);
+  assert.equal(await page.locator('.block.not-run').count(), 2);
+  assert.equal(await page.locator('.block.returned').count(), 1);
+
+  // клик по «возврат на шаге 5» открывает этот шаг
+  await page.click('#summary .pill.ret');
+  assert.match(await page.textContent('#step'), /Есть дебетовые с балансом: вернуть их/);
+  assert.match(await page.textContent('#step'), /Результат алгоритма/);
+  assert.ok(await page.locator('#step tr.row-match').count() >= 2);
+
+  // поднимаем минимум — возврат не срабатывает, срабатывает «кредитные запрещены»
+  await page.locator('#params-panel .qp', { hasText: 'minAmount' }).locator('input').fill('20000');
+  await page.waitForFunction(() => /возврат на шаге 6/.test(document.querySelector('#summary').textContent));
+  assert.match(await summary(page), /Результат \(0\)/);
+
+  // меняем «что вернуть» у сработавшего блока на «весь текущий список»
+  const ret = page.locator('.block.t-return').nth(3);
+  await ret.locator('select.ret-select').first().selectOption('all');
+  await page.waitForFunction(() => /Результат \(4\)/.test(document.querySelector('#summary').textContent));
+
+  // разрешаем кредитные — до конца, возврата нет, серых блоков нет
+  await page.locator('#params-panel .qp', { hasText: 'creditAllowed' }).locator('input[type=checkbox]').check();
+  await page.waitForFunction(() => !/возврат на шаге/.test(document.querySelector('#summary').textContent));
+  assert.equal(await page.locator('.block.not-run').count(), 0);
+  assert.match(await summary(page), /Кредитка Platinum, Кредитка Travel/);
+
+  // новый блок «Возврат» из меню
+  await page.locator('#editor > .flow > .add-wrap > .add-btn').click();
+  await page.locator('.add-menu button', { hasText: 'Возврат' }).click();
+  assert.equal(await page.locator('.block.t-return').count(), 5);
+  assert.deepEqual(errors, []);
+  await browser.close();
+});

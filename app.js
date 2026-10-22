@@ -324,6 +324,7 @@
         card.append(el('div', { class: 'block-msg', text: 'Выражение JS. Например: ({ ...x, balance: x.balance * 2 }) или x.name' }));
         break;
       case 'sort': renderSortBody(card, b); break;
+      case 'return': renderReturnBody(card, b); break;
       case 'reduce':
         card.append(el('div', { class: 'field' },
           el('span', { class: 'kw', text: 'acc =' }),
@@ -616,6 +617,23 @@
     return row;
   }
 
+  // ----- ранний возврат -----
+  function renderReturnBody(card, b) {
+    b.trigger = b.trigger || 'ifMatched';
+    b.value = b.value || 'matched';
+    const pick = (key, map, label) => {
+      const sel = el('select', { class: 'ret-select', 'aria-label': label,
+        onchange: e => { b[key] = e.target.value; changed({ now: true, rerender: true }); } });
+      for (const [k, t] of Object.entries(map)) sel.append(option(k, t, b[key] === k));
+      return sel;
+    };
+    card.append(el('div', { class: 'ret-row' },
+      el('span', { class: 'kw', text: 'вернуть' }), pick('value', E.RETURN_VALUES, 'Что вернуть'),
+      el('span', { class: 'kw', text: 'и завершить алгоритм,' }), pick('trigger', E.RETURN_TRIGGERS, 'Когда срабатывает')));
+    renderCondBody(card, b, 'Совпавшие — элементы, для которых');
+    card.append(el('div', { class: 'block-msg', text: 'Как return в Java: сработавший возврат останавливает весь алгоритм, даже изнутри ветки. Без условий совпадают все элементы.' }));
+  }
+
   // ----- сортировка -----
   function renderSortBody(card, b) {
     const m = /^x\.([\w.]+)$/.exec(b.expr || '');
@@ -650,12 +668,21 @@
   function renderBlockStatus() {
     const r = state.result;
     document.querySelectorAll('.block').forEach(card => {
-      card.classList.remove('has-error', 'has-fail', 'active');
+      card.classList.remove('has-error', 'has-fail', 'active', 'not-run', 'returned');
+      card.removeAttribute('title');
       const msg = card.querySelector(':scope > [data-msg]');
       if (msg) { msg.textContent = ''; msg.className = 'block-msg'; }
       card.querySelectorAll(':scope > .rules [data-rule]').forEach(s => { s.textContent = ''; s.className = 'rule-status'; });
     });
     if (!r) return;
+    for (const id of r.notRun || []) {
+      const card = document.querySelector('.block[data-id="' + id + '"]');
+      if (card) { card.classList.add('not-run'); card.title = 'Не выполнялся: алгоритм завершился раньше'; }
+    }
+    if (r.returned) {
+      const card = document.querySelector('.block[data-id="' + r.returned.blockId + '"]');
+      if (card) card.classList.add('returned');
+    }
     for (const s of r.steps) {
       if (s.type === 'merge') continue;
       const card = document.querySelector('.block[data-id="' + s.blockId + '"]');
@@ -747,7 +774,10 @@
       const lf = labelField(out);
       outText = 'Результат (' + out.length + '): ' + (out.length ? out.map(v => itemLabel(v, lf)).join(', ') : 'пусто');
     }
-    $('summary').replaceChildren(pill, el('span', { class: 'out', text: outText }));
+    $('summary').replaceChildren(pill,
+      r && r.returned ? el('button', { type: 'button', class: 'pill ret', title: 'Перейти к шагу возврата',
+        text: 'возврат на шаге ' + (r.returned.stepIndex + 1), onclick: () => { stop(); setStep(r.returned.stepIndex); } }) : null,
+      el('span', { class: 'out', text: outText }));
 
     // плеер
     const scrub = $('scrub');
@@ -767,7 +797,7 @@
       style: 'padding-left:' + (8 + s.depth * 16) + 'px', onclick: () => { stop(); setStep(i); },
     },
       el('span', { class: 'n', text: String(i + 1) }),
-      el('span', { class: 'st ' + s.status }),
+      el('span', { class: 'st ' + s.status + (s.fired ? ' ret' : '') }),
       el('span', { class: 't', text: s.title }),
       el('span', { class: 'm', text: s.message }))));
     const curBtn = tl.children[state.stepIndex];
@@ -776,7 +806,7 @@
 
   const STATUS_TEXT = {
     kept: 'проходит', dropped: 'отброшен', pass: 'верно', fail: 'нарушено', skipped: 'совпал, не первый',
-    yes: 'да', no: 'нет', new: '', changed: '', moved: '', folded: '',
+    yes: 'да', no: 'нет', match: 'совпал', nomatch: 'не совпал', new: '', changed: '', moved: '', folded: '',
   };
 
   function chips(values, marks, lf) {
@@ -868,6 +898,14 @@
         if (s.split) out.push(el('div', { class: 'split' },
           row('Да', chips(s.split.yes, null, lfBefore), 'yes-box'),
           row('Нет', chips(s.split.no, null, lfBefore), 'no-box')));
+        break;
+      case 'return':
+        out.push(el('div', { class: 'ret-summary ' + (s.fired ? 'fired' : '') },
+          el('span', { class: 'pill ' + (s.fired ? 'ret' : 'ok'), text: s.fired ? 'возврат' : 'не сработал' }),
+          el('span', { text: 'вернуть ' + E.RETURN_VALUES[s.returnValue] + ', ' + E.RETURN_TRIGGERS[s.trigger] })));
+        out.push(ruleLegend(s));
+        out.push(row('Проверка', itemsTable(s.before, s.marks, s.ruleLabels, { statusTitle: 'совпадение' })));
+        if (s.fired) out.push(row('Результат алгоритма', chips(s.after, null, lfBefore)));
         break;
       case 'merge': {
         const lf = labelField(s.after);

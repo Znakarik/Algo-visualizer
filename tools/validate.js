@@ -18,10 +18,13 @@
  *       (тестовые данные + сценарии не покрывают обе стороны условия);
  *   Сценарии (необязательное поле "scenarios" в файле) — запуски с другими
  *   значениями параметров и ожидаемым результатом:
- *     { "name": "...", "params": {"creditAllowed": true}, "expect": ["id1", "id2"], "expectBy": "id", "today": "2026-10-22" }
+ *     { "name": "...", "params": {"creditAllowed": true}, "data": [ ...другие карты... ],
+ *       "expect": ["id1", "id2"], "expectBy": "id", "today": "2026-10-22" }
+ *   ("data" необязателен: если задан, заменяет тестовые элементы для этого сценария)
  *   Несовпадение с expect — ОШИБКА.
  *     - нарушено утверждение;
  *     - условие задано кодом, а не правилами;
+ *     - блок не выполнялся ни в одном запуске; возврат ни разу не сработал;
  *     - у блока нет label; у блока нет source, если у файла указан source
  *       (алгоритм собран из кода).
  *
@@ -130,15 +133,19 @@ function checkFile(file) {
     Array.isArray(algo.extra.scenarios) ? algo.extra.scenarios : []);
   if (algo.extra.scenarios !== undefined && !Array.isArray(algo.extra.scenarios)) errors.push('scenarios должен быть списком');
   const coverage = new Map(); // блок+правило → {label, title, seenTrue, seenFalse}
+  const executedIds = new Set();
+  const firedReturns = new Set();
   const scenarioResults = [];
   let base = null;
   scenarios.forEach((sc, n) => {
     const tag = n === 0 ? '' : 'Сценарий «' + (sc.name || n) + '»: ';
     let runBlocks;
-    try { runBlocks = E.withParams(blocks, sc.params); } catch (e) { errors.push(tag + e.message); return; }
+    try { runBlocks = E.withParams(blocks, sc.params, sc.data); } catch (e) { errors.push(tag + e.message); return; }
     const today = sc.today || opts.today;
     const result = E.run(runBlocks, today ? { today } : undefined);
     if (n === 0) base = result;
+    for (const st of result.steps) executedIds.add(st.blockId);
+    for (const st of result.steps) if (st.type === 'return' && st.fired) firedReturns.add(st.blockId);
     if (result.error) errors.push(tag + 'ошибка при выполнении: ' + result.error);
     for (const s of result.steps) {
       if (s.status === 'fail') warnings.push(tag + 'утверждение «' + s.title + '»: ' + s.message);
@@ -162,6 +169,11 @@ function checkFile(file) {
     if (!c.seenFalse) warnings.push('«' + c.title + '», правило «' + c.label + '» ни разу не было ложным: добавьте тестовые данные или сценарий, где оно ложно');
     if (!c.seenTrue) warnings.push('«' + c.title + '», правило «' + c.label + '» ни разу не было верным: добавьте тестовые данные или сценарий, где оно верно');
   }
+  // блоки, которые не выполнялись ни разу, и возвраты, которые ни разу не сработали
+  walk(blocks, (b, at) => {
+    if (!executedIds.has(b.id)) warnings.push(at + ': не выполнялся ни в одном запуске (до него не доходит). Добавьте сценарий, который до него доходит');
+    else if (b.type === 'return' && !firedReturns.has(b.id)) warnings.push(at + ': возврат ни разу не сработал. Добавьте сценарий, где он срабатывает');
+  });
   const result = base || { output: null, steps: [], today: opts.today };
   return { file, name: algo.name, errors, warnings, output: result.output, steps: result.steps, today: result.today, scenarios: scenarioResults };
 }

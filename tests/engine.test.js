@@ -202,6 +202,86 @@ test('ветвление «только первая»: в «да» первый
   assert.match(r.steps[1].message, /только первый совпавший/);
 });
 
+// ---------- ранний возврат ----------
+
+test('возврат: пример с несколькими return ведёт себя как Java-метод', () => {
+  const ex = X.byKey.cardsReturn;
+  for (const sc of ex.extra.scenarios) {
+    const r = run(E.withParams(ex.make(), sc.params, sc.data));
+    assert.equal(r.error, null, sc.name);
+    assert.deepEqual(r.output.map(c => c.id), sc.expect, sc.name);
+  }
+});
+
+test('возврат останавливает весь алгоритм и сообщает, какие блоки не выполнялись', () => {
+  const blocks = X.byKey.cardsReturn.make();
+  const r = run(blocks);
+  const ret = r.steps[r.returned.stepIndex];
+  assert.equal(ret.title, 'Есть дебетовые с балансом: вернуть их');
+  assert.equal(ret.fired, true);
+  assert.equal(r.steps.at(-1), ret, 'после возврата шагов нет');
+  assert.deepEqual(r.notRun, [blocks[5].id, blocks[6].id]);
+  assert.equal(r.ok, true);
+});
+
+test('несработавший возврат пропускает данные дальше без изменений', () => {
+  const r = run([
+    B('input', { data: '[1, 2, 3]' }),
+    B('return', { trigger: 'ifMatched', value: 'matched', condMode: 'code', expr: 'x > 10' }),
+    B('map', { expr: 'x * 2' }),
+  ]);
+  assert.deepEqual(r.output, [2, 4, 6]);
+  assert.equal(r.returned, null);
+  assert.equal(r.steps[1].fired, false);
+  assert.match(r.steps[1].message, /Не сработал/);
+});
+
+test('возврат: варианты «когда» и «что вернуть»', () => {
+  const go = (trigger, value, expr) => run([
+    B('input', { data: '[1, 2, 3, 4]' }),
+    B('return', { trigger, value, condMode: 'code', expr }),
+    B('map', { expr: '"не дошли"' }),
+  ]).output;
+  assert.deepEqual(go('ifMatched', 'matched', 'x % 2 === 0'), [2, 4]);
+  assert.deepEqual(go('ifMatched', 'first', 'x % 2 === 0'), [2]);
+  assert.deepEqual(go('ifMatched', 'all', 'x === 3'), [1, 2, 3, 4]);
+  assert.deepEqual(go('ifMatched', 'empty', 'x === 3'), []);
+  assert.deepEqual(go('ifNone', 'empty', 'x > 10'), []);
+  assert.deepEqual(go('ifNone', 'empty', 'x > 1'), ['не дошли', 'не дошли', 'не дошли', 'не дошли']);
+  assert.deepEqual(go('always', 'all', 'false'), [1, 2, 3, 4]);
+});
+
+test('возврат без условия: «всегда» возвращает текущий список', () => {
+  const r = run([
+    B('input', { data: '[1, 2]' }),
+    { id: 'r', type: 'return', trigger: 'always', value: 'all' },
+    B('map', { expr: 'x * 10' }),
+  ]);
+  assert.deepEqual(r.output, [1, 2]);
+  assert.deepEqual(E.validate([B('input'), { id: 'r', type: 'return', trigger: 'always', value: 'all' }]), []);
+});
+
+test('возврат изнутри ветки завершает весь алгоритм, а не только ветку', () => {
+  const blocks = [
+    B('input', { data: '[1, 2, 3, 4]' }),
+    B('branch', {
+      condMode: 'code', expr: 'x > 2',
+      yes: [B('return', { trigger: 'always', value: 'all', cond: { join: 'and', rules: [] } })],
+      no: [B('map', { expr: 'x * 100' })],
+    }),
+    B('map', { expr: '"после ветвления"' }),
+  ];
+  const r = run(blocks);
+  assert.deepEqual(r.output, [3, 4]);
+  assert.ok(!r.steps.some(s => s.type === 'merge'), 'слияния нет');
+  assert.deepEqual(r.notRun, [blocks[1].no[0].id, blocks[2].id]);
+});
+
+test('validate ловит неверные trigger и value у возврата', () => {
+  const errs = E.validate([B('input'), B('return', { trigger: 'sometimes', value: 'everything' })]);
+  assert.equal(errs.length, 2);
+});
+
 // ---------- общие механизмы ----------
 
 test('выражения видят параметры через p', () => {
