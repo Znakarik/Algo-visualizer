@@ -1,80 +1,49 @@
-/* Интерфейс конструктора: редактор блоков + пошаговый просмотр выполнения. */
+/* Интерфейс конструктора: редактор блоков, пошаговый просмотр и сохранение алгоритмов. */
 (function () {
   'use strict';
   const E = window.AlgoEngine;
-  const STORE_KEY = 'algo-visualizer:v1';
+  const X = window.AlgoExamples;
 
-  // ---------- примеры ----------
-  const B = (type, props) => E.createBlock(type, props);
-  const PRESETS = {
-    numbers: {
-      title: 'Пример: числа и ветвление',
-      make: () => [
-        B('input', { label: 'Числа', data: '[7, 2, 9, 4, 12, 5, 8, 1]' }),
-        B('filter', { label: 'Убрать единицы', expr: 'x > 1' }),
-        B('branch', {
-          label: 'Чётное?', expr: 'x % 2 === 0',
-          yes: [B('map', { label: 'Половина', expr: 'x / 2' })],
-          no: [B('map', { label: 'Утроить и +1', expr: 'x * 3 + 1' })],
-        }),
-        B('assert', { label: 'Все целые', expr: 'Number.isInteger(x)' }),
-        B('sort', { expr: 'x', order: 'asc' }),
-        B('reduce', { label: 'Сумма', expr: 'acc + x', init: '0' }),
-      ],
-    },
-    students: {
-      title: 'Пример: список студентов',
-      make: () => [
-        B('input', {
-          label: 'Студенты',
-          data: JSON.stringify([
-            { name: 'Аня', score: 82 }, { name: 'Борис', score: 45 }, { name: 'Вика', score: 67 },
-            { name: 'Гоша', score: 30 }, { name: 'Даша', score: 95 },
-          ], null, 1),
-        }),
-        B('assert', { label: 'Баллы в диапазоне', expr: 'x.score >= 0 && x.score <= 100' }),
-        B('branch', {
-          label: 'Сдал?', expr: 'x.score >= 50',
-          yes: [B('map', { expr: "x.name + ' — сдал (' + x.score + ')'" })],
-          no: [
-            B('map', { label: 'Добавить 10 баллов', expr: '({ name: x.name, score: x.score + 10 })' }),
-            B('map', { expr: "x.name + ' — пересдача'" }),
-          ],
-        }),
-      ],
-    },
-    broken: {
-      title: 'Пример: нарушенное утверждение',
-      make: () => [
-        B('input', { label: 'Температуры', data: '21, 19, -3, 25, 40' }),
-        B('map', { label: 'В Фаренгейты', expr: 'x * 9 / 5 + 32' }),
-        B('assert', { label: 'Выше нуля по Фаренгейту', expr: 'x > 32', stopOnFail: false }),
-        B('filter', { label: 'Жарко', expr: 'x >= 77' }),
-      ],
-    },
-  };
+  const KEY_CURRENT = 'algo-visualizer:current';
+  const KEY_LIBRARY = 'algo-visualizer:library';
+  const LEGACY_KEY = 'algo-visualizer:v1';
 
   // ---------- состояние ----------
   const state = {
+    name: '',          // название текущего алгоритма
     blocks: [],
+    savedJson: null,   // как выглядел алгоритм при последнем сохранении (для «есть изменения»)
     result: null,
     stepIndex: 0,
     playing: false,
     timer: null,
+    fields: [],        // поля элементов из входных данных
+    paramNames: [],
   };
 
-  function load() {
+  // ---------- хранилище в браузере ----------
+  function storeGet(key, fallback) {
     try {
-      const raw = localStorage.getItem(STORE_KEY);
-      if (raw) {
-        const blocks = JSON.parse(raw);
-        if (E.validate(blocks).length === 0) return blocks;
-      }
-    } catch (_) { /* хранилище недоступно — начинаем с примера */ }
-    return PRESETS.numbers.make();
+      const raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : fallback;
+    } catch (_) { return fallback; }
   }
-  function save() {
-    try { localStorage.setItem(STORE_KEY, JSON.stringify(state.blocks)); } catch (_) { /* ничего */ }
+  function storeSet(key, value) {
+    try { localStorage.setItem(key, JSON.stringify(value)); return true; } catch (_) { return false; }
+  }
+  function library() { return storeGet(KEY_LIBRARY, {}) || {}; }
+
+  function loadInitial() {
+    const cur = storeGet(KEY_CURRENT, null);
+    if (cur && Array.isArray(cur.blocks) && E.validate(cur.blocks).length === 0) {
+      return { name: cur.name || '', blocks: cur.blocks, savedJson: cur.savedJson || null };
+    }
+    const legacy = storeGet(LEGACY_KEY, null);
+    if (Array.isArray(legacy) && E.validate(legacy).length === 0) return { name: '', blocks: legacy, savedJson: null };
+    return { name: '', blocks: X.byKey.cards.make(), savedJson: null };
+  }
+  function persistCurrent() {
+    storeSet(KEY_CURRENT, { name: state.name, blocks: state.blocks, savedJson: state.savedJson });
   }
 
   // ---------- утилиты ----------
@@ -87,6 +56,8 @@
       else if (k.startsWith('on')) n.addEventListener(k.slice(2), v);
       else if (k === 'text') n.textContent = v;
       else if (k === 'html') n.innerHTML = v;
+      else if (k === 'value') n.value = v;
+      else if (k === 'checked') n.checked = Boolean(v);
       else n.setAttribute(k, v === true ? '' : v);
     }
     for (const c of children.flat()) {
@@ -95,14 +66,33 @@
     }
     return n;
   }
+  function option(value, text, selected) {
+    const o = el('option', { value, text });
+    if (selected) o.selected = true;
+    return o;
+  }
   function fmt(v, max) {
     let s;
-    if (typeof v === 'string') s = JSON.stringify(v);
-    else if (v === undefined) s = 'undefined';
+    if (v === undefined) s = '—';
+    else if (v === null) s = 'null';
+    else if (typeof v === 'boolean') s = v ? 'да' : 'нет';
+    else if (typeof v === 'string') s = v;
     else s = JSON.stringify(v);
     max = max || 48;
     return s.length > max ? s.slice(0, max - 1) + '…' : s;
   }
+  function fmtJson(v, max) {
+    const s = v === undefined ? 'undefined' : JSON.stringify(v);
+    max = max || 60;
+    return s.length > max ? s.slice(0, max - 1) + '…' : s;
+  }
+  function plural(n, one, few, many) {
+    const m10 = n % 10, m100 = n % 100;
+    if (m10 === 1 && m100 !== 11) return one;
+    if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return few;
+    return many;
+  }
+  const isPlainObj = v => v && typeof v === 'object' && !Array.isArray(v);
   const ICONS = {
     up: '<svg viewBox="0 0 16 16"><path d="M8 3l5 6H3z" fill="currentColor"/></svg>',
     down: '<svg viewBox="0 0 16 16"><path d="M8 13L3 7h10z" fill="currentColor"/></svg>',
@@ -110,44 +100,69 @@
     del: '<svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.7"/></svg>',
   };
   function reassignIds(b) {
-    const fresh = E.createBlock(b.type);
-    b.id = fresh.id;
+    b.id = E.createBlock(b.type).id;
     if (b.type === 'branch') { (b.yes || []).forEach(reassignIds); (b.no || []).forEach(reassignIds); }
     return b;
+  }
+  function inputBlock() { return state.blocks.find(b => b.type === 'input') || null; }
+
+  /** Поля и параметры для выпадающих списков. */
+  function refreshContext() {
+    const ib = inputBlock();
+    let items = [];
+    try { items = ib ? E.parseInput(ib.data) : []; } catch (_) { items = []; }
+    state.fields = E.fieldsOf(items);
+    state.paramNames = ib ? (ib.params || []).map(p => p.name).filter(Boolean) : [];
+  }
+  function fieldInfo(name) { return state.fields.find(f => f.name === name) || null; }
+
+  /** Какое поле показывать как «имя» элемента. */
+  function labelField(items) {
+    const objs = (items || []).filter(isPlainObj);
+    if (!objs.length) return null;
+    for (const k of ['name', 'title', 'id']) if (k in objs[0]) return k;
+    const s = Object.keys(objs[0]).find(k => typeof objs[0][k] === 'string');
+    return s || null;
+  }
+  function itemLabel(v, lf) {
+    if (isPlainObj(v) && lf && v[lf] != null) return String(v[lf]);
+    return fmtJson(v, 40);
   }
 
   // ---------- выполнение ----------
   let runTimer = null;
-  function scheduleRun(keepStep) {
+  function changed(opts) {
+    opts = opts || {};
+    persistCurrent();
+    updateSaveState();
+    if (opts.rerender) renderEditor();
     clearTimeout(runTimer);
-    runTimer = setTimeout(() => runNow(keepStep), 250);
+    if (opts.now) runNow(opts.keepStep !== false);
+    else runTimer = setTimeout(() => runNow(true), 250);
   }
   function runNow(keepStep) {
-    save();
     state.result = E.run(state.blocks);
     const n = state.result.steps.length;
     if (!keepStep) state.stepIndex = Math.max(0, n - 1);
     state.stepIndex = Math.min(state.stepIndex, Math.max(0, n - 1));
     renderBlockStatus();
+    renderParamsPanel();
     renderViewer();
   }
 
   // ---------- редактор ----------
   function renderEditor() {
-    const root = $('editor');
-    root.replaceChildren(renderList(state.blocks, true));
+    refreshContext();
+    const y = window.scrollY;
+    $('editor').replaceChildren(renderList(state.blocks, true));
     const count = countBlocks(state.blocks);
     $('block-count').textContent = count + ' ' + plural(count, 'блок', 'блока', 'блоков');
     renderBlockStatus();
+    renderParamsPanel();
+    window.scrollTo(0, y);
   }
   function countBlocks(list) {
     return list.reduce((s, b) => s + 1 + (b.type === 'branch' ? countBlocks(b.yes || []) + countBlocks(b.no || []) : 0), 0);
-  }
-  function plural(n, one, few, many) {
-    const m10 = n % 10, m100 = n % 100;
-    if (m10 === 1 && m100 !== 11) return one;
-    if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return few;
-    return many;
   }
 
   function renderList(list, top) {
@@ -170,10 +185,17 @@
       if (menu) return close();
       menu = el('div', { class: 'add-menu', role: 'menu' });
       for (const [type, info] of Object.entries(E.BLOCK_TYPES)) {
-        if (!top && type === 'input') continue;
+        if (type === 'input' && (!top || inputBlock())) continue;
         menu.append(el('button', {
-          type: 'button', role: 'menuitem', class: 't-' + type,
-          onclick: () => { close(); list.push(E.createBlock(type)); renderEditor(); runNow(false); },
+          type: 'button', role: 'menuitem',
+          onclick: () => {
+            close();
+            const b = E.createBlock(type);
+            if (info.hasCond) b.cond.rules.push(newRule());
+            if (type === 'sort' && state.fields.length) b.expr = 'x.' + state.fields[0].name;
+            list.push(b);
+            changed({ rerender: true, now: true, keepStep: false });
+          },
         }, el('span', { class: 'dot', style: '--c: var(--t-' + type + ')' }), info.title));
       }
       wrap.append(menu);
@@ -187,91 +209,347 @@
     const info = E.BLOCK_TYPES[b.type];
     const card = el('div', { class: 'block t-' + b.type, 'data-id': b.id });
     card.addEventListener('click', e => {
-      if (e.target.closest('input,textarea,select,button')) return;
+      if (e.target.closest('input,textarea,select,button,label')) return;
       e.stopPropagation();
       jumpToBlock(b.id);
     });
-
-    const onChange = (key, parse) => e => {
-      const v = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
-      b[key] = parse ? parse(v) : v;
-      scheduleRun(true);
-    };
 
     const head = el('div', { class: 'block-head' },
       el('span', { class: 'type-tag', text: info.title }),
       el('input', {
         class: 'block-label', value: b.label || '', placeholder: 'название (необязательно)',
-        'aria-label': 'Название блока', oninput: onChange('label'),
+        'aria-label': 'Название блока', oninput: e => { b.label = e.target.value; changed(); },
       }),
       el('div', { class: 'block-tools' },
-        iconBtn('up', 'Выше', index === 0, () => { swap(list, index, index - 1); }),
-        iconBtn('down', 'Ниже', index === list.length - 1, () => { swap(list, index, index + 1); }),
-        iconBtn('copy', 'Дублировать', false, () => {
+        iconBtn('up', 'Выше', index === 0 || (b.type !== 'input' && list[index - 1].type === 'input'), () => swap(list, index, index - 1)),
+        iconBtn('down', 'Ниже', index === list.length - 1 || b.type === 'input', () => swap(list, index, index + 1)),
+        b.type === 'input' ? null : iconBtn('copy', 'Дублировать', false, () => {
           list.splice(index + 1, 0, reassignIds(JSON.parse(JSON.stringify(b))));
-          renderEditor(); runNow(true);
+          changed({ rerender: true, now: true });
         }),
-        iconBtn('del', 'Удалить', false, () => { list.splice(index, 1); renderEditor(); runNow(true); }, 'danger'),
+        iconBtn('del', 'Удалить', false, () => { list.splice(index, 1); changed({ rerender: true, now: true }); }, 'danger'),
       ),
     );
     card.append(head);
 
-    const exprField = (kw, placeholder) => el('label', { class: 'field' },
-      el('span', { class: 'kw', text: kw }),
-      el('input', {
-        class: 'expr', value: b.expr || '', placeholder, spellcheck: 'false', autocomplete: 'off',
-        'aria-label': kw, oninput: onChange('expr'),
-      }));
-
     switch (b.type) {
-      case 'input':
-        card.append(el('label', { class: 'field' },
-          el('textarea', {
-            spellcheck: 'false', rows: String(Math.min(8, Math.max(2, String(b.data).split('\n').length))),
-            'aria-label': 'Входные данные', oninput: onChange('data'),
-          }, b.data || ''),
-        ));
-        card.append(el('div', { class: 'block-msg', text: 'JSON-массив, например [1, 2, 3] или [{"name":"Аня"}], либо значения через запятую' }));
-        break;
-      case 'filter': card.append(exprField('оставить, если', 'x > 0')); break;
-      case 'map': card.append(exprField('x →', 'x * 2')); break;
-      case 'assert': {
-        card.append(exprField('для всех верно', 'x >= 0'));
+      case 'input': renderInputBody(card, b); break;
+      case 'filter': renderCondBody(card, b, 'Оставить элемент, если'); break;
+      case 'assert':
+        renderCondBody(card, b, 'Для каждого элемента должно быть верно');
         card.append(el('label', { class: 'check' },
-          el('input', { type: 'checkbox', checked: b.stopOnFail ? true : null, onchange: onChange('stopOnFail') }),
+          el('input', { type: 'checkbox', checked: b.stopOnFail, onchange: e => { b.stopOnFail = e.target.checked; changed({ now: true }); } }),
           'остановить алгоритм, если нарушено'));
         break;
-      }
-      case 'sort': {
-        const sel = el('select', { 'aria-label': 'Порядок', onchange: onChange('order') },
-          el('option', { value: 'asc', selected: b.order !== 'desc' ? true : null, text: 'по возрастанию' }),
-          el('option', { value: 'desc', selected: b.order === 'desc' ? true : null, text: 'по убыванию' }));
-        card.append(el('div', { class: 'field' },
-          el('span', { class: 'kw', text: 'ключ' }),
-          el('input', { class: 'expr', value: b.expr || '', spellcheck: 'false', 'aria-label': 'Ключ сортировки', oninput: onChange('expr') }),
-          sel));
-        break;
-      }
-      case 'reduce':
-        card.append(el('div', { class: 'field' },
-          el('span', { class: 'kw', text: 'acc =' }),
-          el('input', { class: 'small-input', value: b.init == null ? '' : b.init, spellcheck: 'false', 'aria-label': 'Начальное значение', oninput: onChange('init') }),
-          el('span', { class: 'kw', text: 'затем acc =' }),
-          el('input', { class: 'expr', value: b.expr || '', spellcheck: 'false', 'aria-label': 'Выражение свёртки', oninput: onChange('expr') })));
-        break;
       case 'branch': {
-        card.append(exprField('если', 'x > 0'));
+        renderCondBody(card, b, 'Направить в «Да», если');
         b.yes = b.yes || []; b.no = b.no || [];
         const col = (cls, title, sub) => el('div', { class: 'branch-col ' + cls },
           el('h3', { text: title }),
-          sub.length === 0 ? el('p', { class: 'empty', text: 'Пусто — элементы проходят без изменений' }) : null,
+          sub.length === 0 ? el('p', { class: 'empty', text: 'Пусто: элементы проходят без изменений' }) : null,
           renderList(sub, false));
         card.append(el('div', { class: 'branches' }, col('yes', 'Да', b.yes), col('no', 'Нет', b.no)));
         break;
       }
+      case 'map':
+        card.append(exprField(b, 'x →', 'x.balance * 2', 'expr'));
+        card.append(el('div', { class: 'block-msg', text: 'Выражение JS. Например: ({ ...x, balance: x.balance * 2 }) или x.name' }));
+        break;
+      case 'sort': renderSortBody(card, b); break;
+      case 'reduce':
+        card.append(el('div', { class: 'field' },
+          el('span', { class: 'kw', text: 'acc =' }),
+          el('input', { class: 'small-input', value: b.init == null ? '' : b.init, spellcheck: 'false', 'aria-label': 'Начальное значение', oninput: e => { b.init = e.target.value; changed(); } }),
+          el('span', { class: 'kw', text: 'затем acc =' }),
+          el('input', { class: 'expr', value: b.expr || '', spellcheck: 'false', 'aria-label': 'Выражение свёртки', oninput: e => { b.expr = e.target.value; changed(); } })));
+        break;
     }
     card.append(el('div', { class: 'block-msg', 'data-msg': '' }));
     return card;
+  }
+
+  function exprField(b, kw, placeholder, key) {
+    return el('label', { class: 'field' },
+      el('span', { class: 'kw', text: kw }),
+      el('input', {
+        class: 'expr', value: b[key] || '', placeholder, spellcheck: 'false', autocomplete: 'off',
+        'aria-label': kw, oninput: e => { b[key] = e.target.value; changed(); },
+      }));
+  }
+
+  // ----- входные данные: параметры + массив -----
+  function renderInputBody(card, b) {
+    b.params = b.params || [];
+    const rows = el('div', { class: 'params' });
+    b.params.forEach((p, i) => rows.append(paramRow(b, p, i)));
+    card.append(el('div', { class: 'sub-head' },
+      el('span', { class: 'sub-title', text: 'Параметры' }),
+      el('span', { class: 'block-msg', text: 'флаги и числа, которые можно использовать в условиях' })));
+    card.append(rows);
+    card.append(el('button', {
+      type: 'button', class: 'link-btn', text: '+ параметр',
+      onclick: () => {
+        let n = b.params.length + 1, name = 'param' + n;
+        while (b.params.some(p => p.name === name)) name = 'param' + (++n);
+        b.params.push({ name, type: 'boolean', value: false });
+        changed({ rerender: true, now: true });
+      },
+    }));
+
+    let items = [];
+    let parseErr = null;
+    try { items = E.parseInput(b.data); } catch (e) { parseErr = e.message; }
+    card.append(el('div', { class: 'sub-head' },
+      el('span', { class: 'sub-title', text: 'Элементы' }),
+      el('span', { class: 'block-msg', text: parseErr ? '' : items.length + ' шт.' + (state.fields.length ? ', поля: ' + state.fields.map(f => f.name).join(', ') : '') })));
+    const ta = el('textarea', {
+      spellcheck: 'false', rows: String(Math.min(14, Math.max(3, String(b.data || '').split('\n').length))),
+      'aria-label': 'Элементы (JSON)', class: 'data-area',
+      oninput: e => { b.data = e.target.value; changed(); },
+      onchange: () => changed({ rerender: true, now: true }),
+    });
+    ta.value = b.data || '';
+    card.append(ta);
+    card.append(el('div', { class: 'block-msg' }, 'JSON-массив, например [{"name": "Зарплатная", "balance": 15000}]. Срок действия: "2027-03", "03/27" или "2027-03-31".'));
+  }
+
+  function paramRow(b, p, i) {
+    const valueCtl = paramValueControl(p, () => changed({ now: true }));
+    return el('div', { class: 'param-row' },
+      el('input', {
+        class: 'p-name', value: p.name, spellcheck: 'false', 'aria-label': 'Имя параметра',
+        oninput: e => { p.name = e.target.value.trim(); changed(); },
+        onchange: () => changed({ rerender: true, now: true }),
+      }),
+      (() => {
+        const s = el('select', {
+          'aria-label': 'Тип параметра', class: 'p-type',
+          onchange: e => { p.type = e.target.value; p.value = E.castParam(p.type, p.type === 'boolean' ? false : ''); changed({ rerender: true, now: true }); },
+        });
+        for (const [t, label] of Object.entries(E.PARAM_TYPES)) s.append(option(t, label, p.type === t));
+        return s;
+      })(),
+      valueCtl,
+      iconBtn('del', 'Удалить параметр', false, () => { b.params.splice(i, 1); changed({ rerender: true, now: true }); }, 'danger'),
+    );
+  }
+
+  function paramValueControl(p, onChange) {
+    switch (p.type) {
+      case 'boolean':
+        return el('label', { class: 'toggle' },
+          el('input', { type: 'checkbox', checked: p.value === true, 'aria-label': p.name, onchange: e => {
+            p.value = e.target.checked;
+            e.target.nextElementSibling.textContent = p.value ? 'да' : 'нет';
+            onChange();
+          } }),
+          el('span', { class: 'toggle-text', text: p.value === true ? 'да' : 'нет' }));
+      case 'number':
+        return el('input', { type: 'number', class: 'p-value', value: p.value == null ? '' : String(p.value), 'aria-label': p.name, oninput: e => { p.value = e.target.value === '' ? null : Number(e.target.value); onChange(); } });
+      case 'date':
+        return el('input', { type: 'date', class: 'p-value', value: p.value || '', 'aria-label': p.name, oninput: e => { p.value = e.target.value; onChange(); } });
+      default:
+        return el('input', { class: 'p-value', value: p.value || '', 'aria-label': p.name, oninput: e => { p.value = e.target.value; onChange(); } });
+    }
+  }
+
+  // ----- условие: правила или код -----
+  function newRule() {
+    const f = state.fields[0];
+    if (!f) return { left: { kind: 'field', name: '' }, op: 'eq', right: { kind: 'const', value: '' } };
+    return defaultRuleFor({ kind: 'field', name: f.name });
+  }
+  function defaultRuleFor(left) {
+    const t = left.kind === 'field' ? (fieldInfo(left.name) || {}).type : paramType(left.name);
+    if (t === 'boolean') return { left, op: 'isTrue', right: { kind: 'const', value: '' } };
+    if (t === 'date') return { left, op: 'gte', right: { kind: 'today', value: '' } };
+    if (t === 'number') return { left, op: 'gte', right: { kind: 'const', value: '0' } };
+    const f = left.kind === 'field' ? fieldInfo(left.name) : null;
+    return { left, op: 'eq', right: { kind: 'const', value: f && f.samples.length ? String(f.samples[0]) : '' } };
+  }
+  function paramType(name) {
+    const ib = inputBlock();
+    const p = ib && (ib.params || []).find(q => q.name === name);
+    return p ? p.type : null;
+  }
+
+  function renderCondBody(card, b, caption) {
+    const code = b.condMode === 'code' || (!b.cond && typeof b.expr === 'string');
+    if (!b.cond) b.cond = { join: 'and', rules: [] };
+
+    const modeSwitch = el('div', { class: 'seg', role: 'group', 'aria-label': 'Способ задания условия' },
+      el('button', { type: 'button', class: code ? '' : 'on', 'aria-pressed': String(!code), text: 'Правила',
+        onclick: () => { b.condMode = 'rules'; changed({ rerender: true, now: true }); } }),
+      el('button', { type: 'button', class: code ? 'on' : '', 'aria-pressed': String(code), text: 'Код',
+        onclick: () => {
+          b.condMode = 'code';
+          if (!b.expr) b.expr = rulesToCode(b.cond) || 'true';
+          changed({ rerender: true, now: true });
+        } }));
+
+    if (code) {
+      card.append(el('div', { class: 'cond-head' }, el('span', { class: 'cond-caption', text: caption }), modeSwitch));
+      card.append(exprField(b, 'условие', 'x.balance >= p.minAmount', 'expr'));
+      card.append(el('div', { class: 'block-msg', text: 'x — элемент, p — параметры, i — номер, data — весь массив' }));
+      return;
+    }
+
+    const joinSel = el('select', { 'aria-label': 'Как объединять условия', class: 'join-select',
+      onchange: e => { b.cond.join = e.target.value; changed({ now: true }); } },
+      option('and', 'все условия (И)', b.cond.join !== 'or'),
+      option('or', 'хотя бы одно (ИЛИ)', b.cond.join === 'or'));
+
+    card.append(el('div', { class: 'cond-head' },
+      el('span', { class: 'cond-caption' }, caption + ' ', b.cond.rules.length > 1 ? joinSel : null),
+      modeSwitch));
+
+    const rules = el('div', { class: 'rules' });
+    b.cond.rules.forEach((r, i) => {
+      if (i > 0) rules.append(el('div', { class: 'join-chip', text: b.cond.join === 'or' ? 'или' : 'и' }));
+      rules.append(ruleRow(b, r, i));
+    });
+    if (!b.cond.rules.length) rules.append(el('p', { class: 'empty', text: 'Нет условий: проходят все элементы' }));
+    card.append(rules);
+    card.append(el('button', { type: 'button', class: 'link-btn', text: '+ условие',
+      onclick: () => { b.cond.rules.push(newRule()); changed({ rerender: true, now: true }); } }));
+  }
+
+  function rulesToCode(cond) {
+    const js = r => {
+      const side = o => {
+        if (!o) return 'undefined';
+        if (o.kind === 'field') return 'x.' + o.name;
+        if (o.kind === 'param') return 'p.' + o.name;
+        if (o.kind === 'today') return JSON.stringify(E.todayKey());
+        return JSON.stringify(E.parseConst(o.value));
+      };
+      const a = side(r.left), bb = side(r.right);
+      switch (r.op) {
+        case 'eq': return a + ' === ' + bb;
+        case 'ne': return a + ' !== ' + bb;
+        case 'gt': return a + ' > ' + bb;
+        case 'gte': return a + ' >= ' + bb;
+        case 'lt': return a + ' < ' + bb;
+        case 'lte': return a + ' <= ' + bb;
+        case 'contains': return 'String(' + a + ').includes(' + bb + ')';
+        case 'isTrue': return a + ' === true';
+        case 'isFalse': return '!' + a;
+        case 'isEmpty': return '(' + a + ' == null || ' + a + " === '')";
+        case 'notEmpty': return '(' + a + ' != null && ' + a + " !== '')";
+        default: return 'true';
+      }
+    };
+    const parts = (cond.rules || []).map(js);
+    return parts.join(cond.join === 'or' ? ' || ' : ' && ');
+  }
+
+  /** Выпадающий список «что проверяем»: поля элемента и параметры. */
+  function operandSelect(current, allowKinds, onPick, label) {
+    const s = el('select', { 'aria-label': label, class: 'operand' });
+    const curVal = current ? current.kind + ':' + (current.name != null ? current.name : current.value || '') : '';
+    let found = false;
+    if (allowKinds.includes('field')) {
+      const g = el('optgroup', { label: 'Поле элемента' });
+      for (const f of state.fields) {
+        const v = 'field:' + f.name;
+        if (v === curVal) found = true;
+        g.append(option(v, f.name, v === curVal));
+      }
+      if (current && current.kind === 'field' && current.name && !found) { g.append(option(curVal, current.name + ' (нет в данных)', true)); found = true; }
+      s.append(g);
+    }
+    if (allowKinds.includes('param')) {
+      const g = el('optgroup', { label: 'Параметр' });
+      for (const name of state.paramNames) {
+        const v = 'param:' + name;
+        if (v === curVal) found = true;
+        g.append(option(v, 'p.' + name, v === curVal));
+      }
+      if (current && current.kind === 'param' && current.name && !found) { g.append(option(curVal, 'p.' + current.name + ' (нет такого)', true)); found = true; }
+      s.append(g);
+    }
+    if (!found) s.prepend(option('', 'выберите…', true));
+    s.addEventListener('change', () => {
+      const [kind, ...rest] = s.value.split(':');
+      onPick({ kind, name: rest.join(':') });
+    });
+    return s;
+  }
+
+  function ruleRow(b, r, i) {
+    const op = E.OPS[r.op] || E.OPS.eq;
+    const row = el('div', { class: 'rule' });
+
+    row.append(operandSelect(r.left, ['field', 'param'], picked => {
+      const fresh = defaultRuleFor(picked);
+      b.cond.rules[i] = fresh;
+      changed({ rerender: true, now: true });
+    }, 'Что проверяем'));
+
+    const opSel = el('select', { 'aria-label': 'Операция', class: 'op',
+      onchange: e => {
+        r.op = e.target.value;
+        if (!E.OPS[r.op].unary && (!r.right || (r.right.kind === 'const' && r.right.value === ''))) {
+          r.right = r.right || { kind: 'const', value: '' };
+        }
+        changed({ rerender: true, now: true });
+      } });
+    for (const [k, o] of Object.entries(E.OPS)) opSel.append(option(k, o.label, k === r.op));
+    row.append(opSel);
+
+    if (!op.unary) {
+      r.right = r.right || { kind: 'const', value: '' };
+      const kindSel = el('select', { 'aria-label': 'С чем сравниваем', class: 'rkind',
+        onchange: e => {
+          const k = e.target.value;
+          if (k === 'param') r.right = { kind: 'param', name: state.paramNames[0] || '' };
+          else if (k === 'field') r.right = { kind: 'field', name: (state.fields[0] || {}).name || '' };
+          else r.right = { kind: k, value: '' };
+          changed({ rerender: true, now: true });
+        } },
+        option('const', 'значение', r.right.kind === 'const'),
+        option('param', 'параметр', r.right.kind === 'param'),
+        option('field', 'другое поле', r.right.kind === 'field'),
+        option('today', 'сегодня', r.right.kind === 'today'));
+      row.append(kindSel);
+
+      if (r.right.kind === 'const') {
+        const listId = 'dl-' + b.id + '-' + i;
+        const f = r.left.kind === 'field' ? fieldInfo(r.left.name) : null;
+        row.append(el('input', {
+          class: 'rvalue', value: r.right.value == null ? '' : String(r.right.value), spellcheck: 'false',
+          'aria-label': 'Значение', list: f && f.samples.length ? listId : null,
+          placeholder: f && f.samples.length ? String(f.samples[0]) : 'значение',
+          oninput: e => { r.right.value = e.target.value; changed(); },
+        }));
+        if (f && f.samples.length) row.append(el('datalist', { id: listId }, f.samples.map(v => el('option', { value: String(v) }))));
+      } else if (r.right.kind === 'param' || r.right.kind === 'field') {
+        row.append(operandSelect(r.right, [r.right.kind], picked => { r.right = picked; changed({ rerender: true, now: true }); }, 'Значение'));
+      }
+    }
+
+    row.append(iconBtn('del', 'Удалить условие', false, () => { b.cond.rules.splice(i, 1); changed({ rerender: true, now: true }); }, 'danger'));
+    row.append(el('span', { class: 'rule-status', 'data-rule': String(i) }));
+    return row;
+  }
+
+  // ----- сортировка -----
+  function renderSortBody(card, b) {
+    const m = /^x\.([\w.]+)$/.exec(b.expr || '');
+    const isField = m && fieldInfo(m[1]);
+    const s = el('select', { 'aria-label': 'Ключ сортировки', class: 'operand',
+      onchange: e => {
+        b.expr = e.target.value === '__expr' ? (b.expr || 'x') : 'x.' + e.target.value;
+        b._exprMode = e.target.value === '__expr';
+        changed({ rerender: true, now: true });
+      } });
+    for (const f of state.fields) s.append(option(f.name, f.name, isField && m[1] === f.name && !b._exprMode));
+    s.append(option('__expr', 'выражение…', !isField || b._exprMode));
+    const order = el('select', { 'aria-label': 'Порядок', onchange: e => { b.order = e.target.value; changed({ now: true }); } },
+      option('asc', 'по возрастанию', b.order !== 'desc'),
+      option('desc', 'по убыванию', b.order === 'desc'));
+    card.append(el('div', { class: 'field' }, el('span', { class: 'kw', text: 'по' }), s, order));
+    if (!isField || b._exprMode) card.append(exprField(b, 'ключ =', 'x.balance', 'expr'));
   }
 
   function iconBtn(icon, title, disabled, onclick, extra) {
@@ -280,24 +558,35 @@
       disabled: disabled ? true : null, html: ICONS[icon], onclick,
     });
   }
-  function swap(list, a, b) {
-    [list[a], list[b]] = [list[b], list[a]];
-    renderEditor(); runNow(true);
+  function swap(list, a, c) {
+    [list[a], list[c]] = [list[c], list[a]];
+    changed({ rerender: true, now: true });
   }
 
-  /** Показать на блоках итог: ошибка, нарушенное утверждение, текущий шаг. */
+  /** Отметки на блоках: ошибка, нарушенное утверждение, текущий шаг, итог по правилам. */
   function renderBlockStatus() {
     const r = state.result;
     document.querySelectorAll('.block').forEach(card => {
       card.classList.remove('has-error', 'has-fail', 'active');
       const msg = card.querySelector(':scope > [data-msg]');
       if (msg) { msg.textContent = ''; msg.className = 'block-msg'; }
+      card.querySelectorAll(':scope > .rules [data-rule]').forEach(s => { s.textContent = ''; s.className = 'rule-status'; });
     });
     if (!r) return;
     for (const s of r.steps) {
-      if (s.status === 'ok' || s.type === 'merge') continue;
+      if (s.type === 'merge') continue;
       const card = document.querySelector('.block[data-id="' + s.blockId + '"]');
       if (!card) continue;
+      // сколько элементов прошло каждое правило
+      if (s.ruleLabels && s.marks.length) {
+        card.querySelectorAll(':scope > .rules [data-rule]').forEach(span => {
+          const k = Number(span.getAttribute('data-rule'));
+          const passed = s.marks.filter(m => m.rules && m.rules[k]).length;
+          span.textContent = passed + '/' + s.marks.length;
+          span.title = 'Верно для ' + passed + ' из ' + s.marks.length;
+        });
+      }
+      if (s.status === 'ok') continue;
       card.classList.add(s.status === 'error' ? 'has-error' : 'has-fail');
       const msg = card.querySelector(':scope > [data-msg]');
       if (msg) { msg.textContent = s.message; msg.className = 'block-msg ' + (s.status === 'error' ? 'err' : 'fail'); }
@@ -312,7 +601,36 @@
   function jumpToBlock(id) {
     if (!state.result) return;
     const idx = state.result.steps.findIndex(s => s.blockId === id);
-    if (idx >= 0) setStep(idx);
+    if (idx >= 0) { stop(); setStep(idx); }
+  }
+
+  // ---------- быстрые параметры в панели выполнения ----------
+  function renderParamsPanel() {
+    const box = $('params-panel');
+    if (box.contains(document.activeElement) && document.activeElement.type !== 'checkbox') return; // не мешаем вводу
+    const ib = inputBlock();
+    const params = ib ? (ib.params || []).filter(p => p.name) : [];
+    box.hidden = params.length === 0;
+    if (!params.length) { box.replaceChildren(); return; }
+    box.replaceChildren(
+      el('span', { class: 'lbl', text: 'Параметры' }),
+      ...params.map(p => el('div', { class: 'qp' },
+        el('span', { class: 'qp-name', text: p.name }),
+        paramValueControl(p, () => { changed({ now: true }); syncInputBlock(); }))));
+  }
+
+  /** Перерисовать только блок входных данных (после правки параметров в панели). */
+  let syncTimer = null;
+  function syncInputBlock() {
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(() => {
+      const ib = inputBlock();
+      const old = ib && document.querySelector('.block[data-id="' + ib.id + '"]');
+      if (!old || old.contains(document.activeElement)) return;
+      const idx = state.blocks.indexOf(ib);
+      old.replaceWith(renderBlock(ib, state.blocks, idx));
+      renderBlockStatus();
+    }, 300);
   }
 
   // ---------- просмотр шагов ----------
@@ -322,9 +640,9 @@
     renderBlockStatus();
     renderViewer();
     const cur = state.result && state.result.steps[state.stepIndex];
-    if (cur) {
+    if (cur && state.playing) {
       const card = document.querySelector('.block[data-id="' + cur.blockId + '"]');
-      if (card && state.playing && card.scrollIntoView) card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      if (card && card.scrollIntoView) card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     }
   }
 
@@ -334,14 +652,19 @@
     const n = steps.length;
 
     // итог
-    const sum = $('summary');
     let pill;
     if (!r || n === 0) pill = el('span', { class: 'pill ok', text: 'нет шагов' });
     else if (r.error) pill = el('span', { class: 'pill error', text: 'ошибка' });
     else if (!r.ok) pill = el('span', { class: 'pill fail', text: 'утверждение нарушено' });
     else pill = el('span', { class: 'pill ok', text: 'успешно' });
-    sum.replaceChildren(pill,
-      el('span', { class: 'out' }, r && r.error ? r.error : 'Результат: ' + fmt(r ? r.output : [], 160)));
+    let outText;
+    if (r && r.error) outText = r.error;
+    else {
+      const out = r ? r.output : [];
+      const lf = labelField(out);
+      outText = 'Результат (' + out.length + '): ' + (out.length ? out.map(v => itemLabel(v, lf)).join(', ') : 'пусто');
+    }
+    $('summary').replaceChildren(pill, el('span', { class: 'out', text: outText }));
 
     // плеер
     const scrub = $('scrub');
@@ -353,10 +676,8 @@
     $('btn-next').disabled = state.stepIndex >= n - 1;
     $('btn-play').textContent = state.playing ? '❚❚ Пауза' : '▶ Пуск';
 
-    // шаг
-    $('step').replaceChildren(...renderStep(steps[state.stepIndex]));
+    $('step').replaceChildren(...renderStep(steps[state.stepIndex], r));
 
-    // список шагов
     const tl = $('timeline');
     tl.replaceChildren(...steps.map((s, i) => el('button', {
       type: 'button', class: i === state.stepIndex ? 'cur' : '',
@@ -370,32 +691,68 @@
     if (curBtn && curBtn.scrollIntoView && state.playing) curBtn.scrollIntoView({ block: 'nearest' });
   }
 
-  function chips(values, marks, opts) {
-    opts = opts || {};
+  const STATUS_TEXT = {
+    kept: 'проходит', dropped: 'отброшен', pass: 'верно', fail: 'нарушено',
+    yes: 'да', no: 'нет', new: '', changed: '', moved: '', folded: '',
+  };
+
+  function chips(values, marks, lf) {
     if (!values || values.length === 0) return el('div', { class: 'chips' }, el('span', { class: 'none', text: 'пусто' }));
     const byIndex = new Map((marks || []).map(m => [m.index, m]));
     return el('div', { class: 'chips' }, values.map((v, i) => {
-      const m = opts.noMarks ? null : byIndex.get(i);
+      const m = byIndex.get(i);
       return el('span', { class: 'chip ' + (m ? m.status : ''), title: JSON.stringify(v) },
-        el('span', { class: 'idx', text: String(i) }), fmt(v));
+        el('span', { class: 'idx', text: String(i) }), lf !== undefined ? itemLabel(v, lf) : fmtJson(v, 48));
     }));
   }
+
+  /** Таблица элементов: поля + (если есть) колонка результата и колонки правил. */
+  function itemsTable(items, marks, ruleLabels, opts) {
+    opts = opts || {};
+    if (!items || !items.length) return el('div', { class: 'chips' }, el('span', { class: 'none', text: 'пусто' }));
+    if (!items.every(isPlainObj)) return chips(items, marks);
+    const byIndex = new Map((marks || []).map(m => [m.index, m]));
+    const fields = E.fieldsOf(items).map(f => f.name);
+    const showStatus = marks && marks.some(m => STATUS_TEXT[m.status]);
+    const head = el('tr', {},
+      el('th', { text: '#' }),
+      showStatus ? el('th', { text: opts.statusTitle || 'итог' }) : null,
+      (ruleLabels || []).map((t, k) => el('th', { class: 'rule-col', title: t, text: 'П' + (k + 1) })),
+      fields.map(f => el('th', { text: f })));
+    const body = items.map((it, i) => {
+      const m = byIndex.get(i);
+      return el('tr', { class: m ? 'row-' + m.status : '' },
+        el('td', { class: 'num', text: String(i) }),
+        showStatus ? el('td', {}, m ? el('span', { class: 'tag ' + m.status, text: STATUS_TEXT[m.status] }) : null) : null,
+        (ruleLabels || []).map((_, k) => {
+          const ok = m && m.rules ? m.rules[k] : null;
+          return el('td', { class: 'rule-cell ' + (ok ? 'yes' : 'no'), text: ok == null ? '' : ok ? '✓' : '✗' });
+        }),
+        fields.map(f => {
+          const v = E.getPath(it, f);
+          return el('td', { class: typeof v === 'number' ? 'n-cell' : '', text: fmt(v, 32) });
+        }));
+    });
+    return el('div', { class: 'table-wrap' }, el('table', { class: 'trace-table items' }, el('thead', {}, head), el('tbody', {}, body)));
+  }
+
+  function ruleLegend(s) {
+    if (!s.ruleLabels || !s.ruleLabels.length) {
+      return s.condText ? el('p', { class: 'cond-line' }, el('span', { class: 'kw', text: 'условие: ' }), el('code', { text: s.condText })) : null;
+    }
+    return el('ol', { class: 'rule-legend' },
+      s.ruleLabels.map((t, k) => el('li', {},
+        el('span', { class: 'rule-id', text: 'П' + (k + 1) }),
+        el('code', { text: t }),
+        k < s.ruleLabels.length - 1 ? el('span', { class: 'join-chip', text: s.join === 'or' ? 'или' : 'и' }) : null)));
+  }
+
   function row(label, content, cls) {
     return el('div', { class: 'data-row ' + (cls || '') }, el('span', { class: 'lbl', text: label }), content);
   }
-  function legend(items) {
-    const colors = {
-      kept: ['--ok-soft', '--ok'], dropped: ['--bad-soft', '--bad'], pass: ['--ok-soft', '--ok'],
-      fail: ['--bad-soft', '--bad'], yes: ['--yes-soft', '--yes'], no: ['--no-soft', '--no'],
-    };
-    return el('div', { class: 'legend' }, items.map(([k, text]) => el('span', {},
-      el('i', { style: 'background:var(' + colors[k][0] + ');border-color:var(' + colors[k][1] + ')' }), text)));
-  }
 
-  function renderStep(s) {
-    if (!s) {
-      return [el('p', { class: 'step-msg', text: 'Добавьте блок «Входные данные», чтобы начать.' })];
-    }
+  function renderStep(s, r) {
+    if (!s) return [el('p', { class: 'step-msg', text: 'Добавьте блок «Входные данные», чтобы начать.' })];
     const out = [];
     out.push(el('div', { class: 'step-title' },
       el('strong', { text: s.title }),
@@ -403,61 +760,65 @@
       s.status !== 'ok' ? el('span', { class: 'pill ' + s.status, text: s.status === 'error' ? 'ошибка' : 'нарушено' }) : null));
     out.push(el('p', { class: 'step-msg ' + s.status, text: s.message }));
 
+    const lfBefore = labelField(s.before);
     switch (s.type) {
       case 'input':
-        if (s.after) out.push(row('Данные', chips(s.after, null)));
+        if (s.params && Object.keys(s.params).length) {
+          out.push(row('Параметры', el('div', { class: 'chips' },
+            Object.entries(s.params).map(([k, v]) => el('span', { class: 'chip param' }, el('span', { class: 'idx', text: k }), fmt(v))))));
+        }
+        if (s.after) out.push(row('Элементы', itemsTable(s.after, null)));
+        if (r && r.today) out.push(el('p', { class: 'block-msg', text: '«Сегодня» в условиях: ' + r.today }));
         break;
       case 'filter':
-        out.push(row('До фильтра', chips(s.before, s.marks)));
-        if (s.after) out.push(row('После', chips(s.after, null)));
-        out.push(legend([['kept', 'проходит'], ['dropped', 'отброшен']]));
+        out.push(ruleLegend(s));
+        out.push(row('Проверка', itemsTable(s.before, s.marks, s.ruleLabels)));
+        if (s.after) out.push(row('Осталось', chips(s.after, null, lfBefore)));
         break;
       case 'assert':
-        out.push(row('Проверка', chips(s.before, s.marks)));
-        out.push(legend([['pass', 'верно'], ['fail', 'нарушено']]));
+        out.push(ruleLegend(s));
+        out.push(row('Проверка', itemsTable(s.before, s.marks, s.ruleLabels)));
         break;
+      case 'branch':
+        out.push(ruleLegend(s));
+        out.push(row('Проверка', itemsTable(s.before, s.marks, s.ruleLabels, { statusTitle: 'ветка' })));
+        if (s.split) out.push(el('div', { class: 'split' },
+          row('Да', chips(s.split.yes, null, lfBefore), 'yes-box'),
+          row('Нет', chips(s.split.no, null, lfBefore), 'no-box')));
+        break;
+      case 'merge': {
+        const lf = labelField(s.after);
+        if (s.split) out.push(el('div', { class: 'split' },
+          row('Из ветки «да»', chips(s.split.yes, null, lf), 'yes-box'),
+          row('Из ветки «нет»', chips(s.split.no, null, lf), 'no-box')));
+        out.push(row('После слияния', itemsTable(s.after, null)));
+        break;
+      }
       case 'map':
-        if (s.marks.length) out.push(tableOf(['#', 'было', '', 'стало'], s.marks.map(m => [m.index, fmt(m.from, 60), '→', fmt(m.to, 60)])));
+        if (s.marks.length) out.push(tableOf(['#', 'было', '', 'стало'], s.marks.map(m => [m.index, fmtJson(m.from, 60), '→', fmtJson(m.to, 60)])));
         else out.push(row('До', chips(s.before, null)));
         break;
       case 'sort':
-        out.push(row('До', chips(s.before, null)));
-        if (s.after) out.push(row('После', chips(s.after, null)));
+        out.push(row('До', chips(s.before, null, lfBefore)));
+        if (s.after) out.push(row('После', itemsTable(s.after, null)));
         break;
       case 'reduce':
         if (s.marks.length) {
           out.push(tableOf(['#', 'элемент', 'acc было', '', 'acc стало'],
-            s.marks.map(m => [m.index, fmt(s.before[m.index], 40), fmt(m.from, 40), '→', fmt(m.to, 40)])));
+            s.marks.map(m => [m.index, fmtJson(s.before[m.index], 40), fmtJson(m.from, 40), '→', fmtJson(m.to, 40)])));
         } else out.push(row('До', chips(s.before, null)));
-        break;
-      case 'branch':
-        out.push(row('Вход', chips(s.before, s.marks)));
-        if (s.split) {
-          out.push(el('div', { class: 'split' },
-            row('Да', chips(s.split.yes, null), 'yes-box'),
-            row('Нет', chips(s.split.no, null), 'no-box')));
-        }
-        out.push(legend([['yes', 'условие верно'], ['no', 'условие ложно']]));
-        break;
-      case 'merge':
-        if (s.split) {
-          out.push(el('div', { class: 'split' },
-            row('Из ветки «да»', chips(s.split.yes, null), 'yes-box'),
-            row('Из ветки «нет»', chips(s.split.no, null), 'no-box')));
-        }
-        out.push(row('После слияния', chips(s.after, s.marks)));
         break;
       default:
         out.push(row('До', chips(s.before, null)));
     }
-    if (s.status === 'error') out.push(row('Данные на входе блока', chips(s.before, null)));
-    return out;
+    if (s.status === 'error') out.push(row('Данные на входе блока', itemsTable(s.before, null)));
+    return out.filter(Boolean);
   }
 
   function tableOf(headers, rows) {
     return el('div', { class: 'table-wrap' }, el('table', { class: 'trace-table' },
       el('thead', {}, el('tr', {}, headers.map(h => el('th', { text: h })))),
-      el('tbody', {}, rows.map(r => el('tr', {}, r.map((c, i) => el('td', { class: c === '→' ? 'arrow' : null, text: String(c) })))))));
+      el('tbody', {}, rows.map(r => el('tr', {}, r.map(c => el('td', { class: c === '→' ? 'arrow' : null, text: String(c) })))))));
   }
 
   // ---------- проигрывание ----------
@@ -468,22 +829,131 @@
     state.playing = true;
     renderViewer();
     state.timer = setInterval(() => {
-      const total = state.result.steps.length;
-      if (state.stepIndex >= total - 1) { stop(); return; }
+      if (state.stepIndex >= state.result.steps.length - 1) { stop(); return; }
       setStep(state.stepIndex + 1);
-    }, 1100);
+    }, 1200);
   }
   function stop() {
+    if (!state.playing && !state.timer) return;
     state.playing = false;
     clearInterval(state.timer);
     state.timer = null;
     renderViewer();
   }
 
-  // ---------- импорт / экспорт ----------
+  // ---------- сохранение ----------
+  function currentJson() { return JSON.stringify(state.blocks); }
+  function updateSaveState() {
+    const dirty = state.savedJson !== currentJson();
+    const st = $('save-state');
+    if (!state.name && !state.savedJson) st.textContent = 'не сохранён';
+    else st.textContent = dirty ? 'есть несохранённые изменения' : 'сохранён';
+    st.className = 'save-state' + (dirty ? ' dirty' : '');
+    renderLibrary();
+  }
+  function renderLibrary() {
+    const lib = library();
+    const sel = $('library');
+    const names = Object.keys(lib).sort((a, b) => a.localeCompare(b, 'ru'));
+    sel.replaceChildren(option('', names.length ? 'Мои алгоритмы (' + names.length + ')…' : 'Сохранённых пока нет', true));
+    for (const n of names) sel.append(option(n, n + (n === state.name ? ' — открыт' : ''), false));
+    $('btn-delete').disabled = !state.name || !lib[state.name];
+  }
+  function flash(text, err) {
+    const st = $('save-state');
+    st.textContent = text;
+    st.className = 'save-state' + (err ? ' err' : ' good');
+    clearTimeout(flash.t);
+    flash.t = setTimeout(updateSaveState, 2500);
+  }
+
+  function saveToLibrary() {
+    const name = $('algo-name').value.trim();
+    if (!name) { $('algo-name').focus(); flash('Введите название, чтобы сохранить', true); return; }
+    const lib = library();
+    lib[name] = { blocks: state.blocks, savedAt: new Date().toISOString() };
+    if (!storeSet(KEY_LIBRARY, lib)) { flash('Браузер не дал сохранить. Скачайте файл.', true); return; }
+    state.name = name;
+    state.savedJson = currentJson();
+    persistCurrent();
+    updateSaveState();
+    flash('Сохранено: ' + name);
+  }
+
+  function openAlgorithm(name, blocks, savedJson) {
+    stop();
+    state.name = name || '';
+    state.blocks = blocks;
+    state.savedJson = savedJson === undefined ? null : savedJson;
+    $('algo-name').value = state.name;
+    persistCurrent();
+    renderEditor();
+    updateSaveState();
+    runNow(false);
+    setStep(0);
+  }
+
+  let deleteArmed = null;
+  function deleteFromLibrary() {
+    const lib = library();
+    if (!state.name || !lib[state.name]) return;
+    const btn = $('btn-delete');
+    if (deleteArmed !== state.name) {
+      deleteArmed = state.name;
+      btn.textContent = 'Точно удалить?';
+      btn.classList.add('danger');
+      setTimeout(() => { deleteArmed = null; btn.textContent = 'Удалить'; btn.classList.remove('danger'); }, 3000);
+      return;
+    }
+    delete lib[state.name];
+    storeSet(KEY_LIBRARY, lib);
+    deleteArmed = null;
+    btn.textContent = 'Удалить';
+    btn.classList.remove('danger');
+    const removed = state.name;
+    state.savedJson = null;
+    persistCurrent();
+    updateSaveState();
+    flash('Удалён из списка: ' + removed);
+  }
+
+  function fileName() {
+    const base = (state.name || 'алгоритм').replace(/[\\/:*?"<>|]+/g, '_').trim() || 'алгоритм';
+    return base + '.algo.json';
+  }
+  function downloadFile() {
+    const data = JSON.stringify(E.serialize(state.name || 'Без названия', state.blocks), null, 2);
+    try {
+      const url = URL.createObjectURL(new Blob([data], { type: 'application/json' }));
+      const a = el('a', { href: url, download: fileName() });
+      document.body.append(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+      flash('Файл: ' + fileName());
+    } catch (_) {
+      openIO();
+    }
+  }
+  function openFile(file) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const { name, blocks } = E.deserialize(String(reader.result));
+        const n = name || file.name.replace(/(\.algo)?\.json$/i, '');
+        openAlgorithm(n, blocks, null);
+        flash('Открыт файл: ' + file.name);
+      } catch (e) {
+        flash(e.message, true);
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  // ----- окно JSON -----
   function openIO() {
-    $('io-text').value = JSON.stringify(state.blocks, null, 2);
-    setNote('Скопируйте, чтобы сохранить, или вставьте свою схему и нажмите «Загрузить».');
+    $('io-text').value = JSON.stringify(E.serialize(state.name || 'Без названия', state.blocks), null, 2);
+    setNote('Скопируйте, чтобы сохранить, или вставьте свой алгоритм и нажмите «Загрузить».');
     $('modal').hidden = false;
     $('io-text').focus();
   }
@@ -494,40 +964,57 @@
   // ---------- старт ----------
   function init() {
     const sel = $('preset');
-    sel.append(el('option', { value: '', text: 'Примеры…' }));
-    for (const [k, p] of Object.entries(PRESETS)) sel.append(el('option', { value: k, text: p.title }));
+    sel.append(option('', 'Примеры…', true));
+    for (const ex of X.list) sel.append(option(ex.key, ex.title));
     sel.addEventListener('change', () => {
       if (!sel.value) return;
-      stop();
-      state.blocks = PRESETS[sel.value].make();
+      const ex = X.byKey[sel.value];
       sel.value = '';
-      renderEditor(); runNow(false);
+      openAlgorithm('', ex.make(), null);
     });
 
     $('btn-new').addEventListener('click', () => {
-      stop();
-      state.blocks = [E.createBlock('input', { data: '[1, 2, 3]' })];
-      renderEditor(); runNow(false);
+      openAlgorithm('', [E.createBlock('input', {
+        params: [{ name: 'creditAllowed', type: 'boolean', value: false }],
+        data: JSON.stringify(X.CARDS.slice(0, 3), null, 1),
+      })], null);
+      $('algo-name').focus();
     });
+
+    $('algo-name').addEventListener('input', e => { state.name = e.target.value.trim(); persistCurrent(); });
+    $('algo-name').addEventListener('keydown', e => { if (e.key === 'Enter') saveToLibrary(); });
+    $('btn-save').addEventListener('click', saveToLibrary);
+    $('btn-delete').addEventListener('click', deleteFromLibrary);
+    $('library').addEventListener('change', e => {
+      const name = e.target.value;
+      if (!name) return;
+      const entry = library()[name];
+      if (!entry) return;
+      openAlgorithm(name, JSON.parse(JSON.stringify(entry.blocks)), JSON.stringify(entry.blocks));
+      flash('Открыт: ' + name);
+    });
+    $('btn-download').addEventListener('click', downloadFile);
+    $('btn-open-file').addEventListener('click', () => $('file-input').click());
+    $('file-input').addEventListener('change', e => {
+      const f = e.target.files && e.target.files[0];
+      if (f) openFile(f);
+      e.target.value = '';
+    });
+
     $('btn-io').addEventListener('click', openIO);
     $('io-close').addEventListener('click', () => { $('modal').hidden = true; });
     $('modal').addEventListener('click', e => { if (e.target === $('modal')) $('modal').hidden = true; });
     $('io-copy').addEventListener('click', () => {
       const text = $('io-text').value;
-      const fallback = () => { $('io-text').select(); setNote('Текст выделен — нажмите Cmd+C / Ctrl+C.'); };
-      try {
-        navigator.clipboard.writeText(text).then(() => setNote('Скопировано.'), fallback);
-      } catch (_) { fallback(); }
+      const fallback = () => { $('io-text').select(); setNote('Текст выделен, нажмите Cmd+C / Ctrl+C.'); };
+      try { navigator.clipboard.writeText(text).then(() => setNote('Скопировано.'), fallback); } catch (_) { fallback(); }
     });
     $('io-load').addEventListener('click', () => {
-      let blocks;
-      try { blocks = JSON.parse($('io-text').value); } catch (e) { setNote('Это не JSON: ' + e.message, true); return; }
-      const errs = E.validate(blocks);
-      if (errs.length) { setNote('Схема не подходит: ' + errs.slice(0, 3).join('; '), true); return; }
-      stop();
-      state.blocks = blocks;
-      $('modal').hidden = true;
-      renderEditor(); runNow(false);
+      try {
+        const { name, blocks } = E.deserialize($('io-text').value);
+        $('modal').hidden = true;
+        openAlgorithm(name === 'Без названия' ? '' : name, blocks, null);
+      } catch (e) { setNote(e.message, true); }
     });
 
     $('btn-first').addEventListener('click', () => { stop(); setStep(0); });
@@ -537,6 +1024,7 @@
     $('scrub').addEventListener('input', e => { stop(); setStep(Number(e.target.value)); });
 
     document.addEventListener('keydown', e => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') { e.preventDefault(); saveToLibrary(); return; }
       if (e.target.closest('input,textarea,select') || !$('modal').hidden) {
         if (e.key === 'Escape') $('modal').hidden = true;
         return;
@@ -546,10 +1034,8 @@
       else if (e.key === ' ') { state.playing ? stop() : play(); e.preventDefault(); }
     });
 
-    state.blocks = load();
-    renderEditor();
-    runNow(false);
-    setStep(0);
+    const initial = loadInitial();
+    openAlgorithm(initial.name, initial.blocks, initial.savedJson);
   }
 
   init();

@@ -1,0 +1,166 @@
+{
+  "format": "algo-visualizer",
+  "version": 2,
+  "name": "Подбор карт",
+  "savedAt": "2026-10-22T08:23:37.598Z",
+  "blocks": [
+    {
+      "id": "imvj9xw1q1",
+      "type": "input",
+      "label": "Карты клиента",
+      "params": [
+        {
+          "name": "creditAllowed",
+          "type": "boolean",
+          "value": false
+        },
+        {
+          "name": "hasMinAmount",
+          "type": "boolean",
+          "value": true
+        },
+        {
+          "name": "minAmount",
+          "type": "number",
+          "value": 5000
+        }
+      ],
+      "data": "[\n {\n  \"id\": \"4276 •• 1111\",\n  \"name\": \"Зарплатная\",\n  \"type\": \"debit\",\n  \"balance\": 15000,\n  \"expires\": \"2027-03\",\n  \"currency\": \"RUB\",\n  \"blocked\": false\n },\n {\n  \"id\": \"5536 •• 2222\",\n  \"name\": \"Кредитка Platinum\",\n  \"type\": \"credit\",\n  \"balance\": 120000,\n  \"expires\": \"2028-11\",\n  \"currency\": \"RUB\",\n  \"blocked\": false\n },\n {\n  \"id\": \"2200 •• 3333\",\n  \"name\": \"Старая дебетовая\",\n  \"type\": \"debit\",\n  \"balance\": 800,\n  \"expires\": \"2025-08\",\n  \"currency\": \"RUB\",\n  \"blocked\": false\n },\n {\n  \"id\": \"4111 •• 4444\",\n  \"name\": \"Кредитка Travel\",\n  \"type\": \"credit\",\n  \"balance\": 3000,\n  \"expires\": \"2027-01\",\n  \"currency\": \"USD\",\n  \"blocked\": false\n },\n {\n  \"id\": \"2202 •• 5555\",\n  \"name\": \"Накопительная\",\n  \"type\": \"debit\",\n  \"balance\": 56000,\n  \"expires\": \"2026-12\",\n  \"currency\": \"RUB\",\n  \"blocked\": true\n },\n {\n  \"id\": \"2200 •• 6666\",\n  \"name\": \"Мир\",\n  \"type\": \"debit\",\n  \"balance\": 7300,\n  \"expires\": \"2029-05\",\n  \"currency\": \"RUB\",\n  \"blocked\": false\n }\n]"
+    },
+    {
+      "id": "fmvj9xw1q2",
+      "type": "filter",
+      "label": "Срок не истёк",
+      "cond": {
+        "join": "and",
+        "rules": [
+          {
+            "left": {
+              "kind": "field",
+              "name": "expires"
+            },
+            "op": "gte",
+            "right": {
+              "kind": "today",
+              "value": ""
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "fmvj9xw1q3",
+      "type": "filter",
+      "label": "Не заблокирована",
+      "cond": {
+        "join": "and",
+        "rules": [
+          {
+            "left": {
+              "kind": "field",
+              "name": "blocked"
+            },
+            "op": "isFalse",
+            "right": {
+              "kind": "const",
+              "value": ""
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "fmvj9xw1q4",
+      "type": "filter",
+      "label": "Кредитные разрешены?",
+      "cond": {
+        "join": "or",
+        "rules": [
+          {
+            "left": {
+              "kind": "param",
+              "name": "creditAllowed"
+            },
+            "op": "isTrue",
+            "right": {
+              "kind": "const",
+              "value": ""
+            }
+          },
+          {
+            "left": {
+              "kind": "field",
+              "name": "type"
+            },
+            "op": "ne",
+            "right": {
+              "kind": "const",
+              "value": "credit"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "fmvj9xw1q5",
+      "type": "filter",
+      "label": "Хватает минимальной суммы",
+      "cond": {
+        "join": "or",
+        "rules": [
+          {
+            "left": {
+              "kind": "param",
+              "name": "hasMinAmount"
+            },
+            "op": "isFalse",
+            "right": {
+              "kind": "const",
+              "value": ""
+            }
+          },
+          {
+            "left": {
+              "kind": "field",
+              "name": "balance"
+            },
+            "op": "gte",
+            "right": {
+              "kind": "param",
+              "name": "minAmount"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "amvj9xw1q6",
+      "type": "assert",
+      "label": "Все карты в рублях",
+      "cond": {
+        "join": "and",
+        "rules": [
+          {
+            "left": {
+              "kind": "field",
+              "name": "currency"
+            },
+            "op": "eq",
+            "right": {
+              "kind": "const",
+              "value": "RUB"
+            }
+          }
+        ]
+      },
+      "stopOnFail": false
+    },
+    {
+      "id": "smvj9xw1q7",
+      "type": "sort",
+      "label": "Сначала с большим балансом",
+      "expr": "x.balance",
+      "order": "desc"
+    }
+  ]
+}

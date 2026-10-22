@@ -24,18 +24,32 @@
     </svg>
     Конструктор алгоритмов
   </h1>
-  <p class="sub">Соберите алгоритм из блоков и пройдите его по шагам: что было на входе, что стало на выходе.</p>
   <div class="toolbar">
-    <select id="preset" class="btn" aria-label="Пример алгоритма"></select>
-    <button id="btn-new" class="btn">Новый</button>
-    <button id="btn-io" class="btn">Импорт / экспорт</button>
+    <select id="preset" class="btn" aria-label="Примеры"></select>
+    <button id="btn-new" class="btn" type="button">Новый</button>
+    <button id="btn-io" class="btn ghost" type="button" title="Показать алгоритм как JSON">JSON</button>
   </div>
 </header>
+
+<section class="savebar" aria-label="Сохранение">
+  <label class="name-field">
+    <span class="lbl">Алгоритм</span>
+    <input id="algo-name" type="text" placeholder="Название, например «Подбор карт для оплаты»" autocomplete="off">
+  </label>
+  <button id="btn-save" class="btn primary" type="button" title="Сохранить в браузере (Cmd+S)">Сохранить</button>
+  <select id="library" class="btn" aria-label="Сохранённые алгоритмы"></select>
+  <button id="btn-delete" class="btn ghost" type="button">Удалить</button>
+  <span class="sep" aria-hidden="true"></span>
+  <button id="btn-download" class="btn" type="button" title="Скачать алгоритм в .json-файл">Скачать файл</button>
+  <button id="btn-open-file" class="btn" type="button" title="Открыть .json-файл алгоритма">Открыть файл</button>
+  <input id="file-input" type="file" accept=".json,application/json" hidden>
+  <span id="save-state" class="save-state" role="status"></span>
+</section>
 
 <main class="layout">
   <section class="panel" aria-labelledby="h-flow">
     <div class="panel-head">
-      <h2 id="h-flow">Алгоритм</h2>
+      <h2 id="h-flow">Схема</h2>
       <span class="block-msg" id="block-count"></span>
     </div>
     <div id="editor" class="flow"></div>
@@ -43,38 +57,36 @@
 
   <section class="panel viewer" aria-labelledby="h-steps">
     <div class="panel-head"><h2 id="h-steps">Выполнение</h2></div>
+    <div id="params-panel" class="params-panel" hidden></div>
     <div id="summary" class="summary"></div>
     <div class="player">
-      <button id="btn-first" class="btn" title="В начало" aria-label="В начало">⏮</button>
-      <button id="btn-prev" class="btn" title="Назад (←)" aria-label="Назад">←</button>
-      <button id="btn-play" class="btn primary" title="Пуск / пауза (пробел)">▶ Пуск</button>
-      <button id="btn-next" class="btn" title="Вперёд (→)" aria-label="Вперёд">→</button>
+      <button id="btn-first" class="btn" type="button" title="В начало" aria-label="В начало">⏮</button>
+      <button id="btn-prev" class="btn" type="button" title="Назад (←)" aria-label="Назад">←</button>
+      <button id="btn-play" class="btn primary" type="button" title="Пуск / пауза (пробел)">▶ Пуск</button>
+      <button id="btn-next" class="btn" type="button" title="Вперёд (→)" aria-label="Вперёд">→</button>
       <input id="scrub" type="range" min="0" max="0" value="0" aria-label="Шаг">
       <span id="counter" class="counter"></span>
     </div>
     <div id="step" class="step-card"></div>
     <div id="timeline" class="timeline" aria-label="Все шаги"></div>
-    <div class="help">
-      <p>В выражениях: <code>x</code> — элемент, <code>i</code> — его номер, <code>data</code> — весь массив, <code>acc</code> — накопитель в свёртке.</p>
-      <p>Примеры: <code>x &gt; 10</code>, <code>x.age &gt;= 18</code>, <code>x.name.toUpperCase()</code>, <code>Math.max(acc, x)</code>, <code>typeof x === 'number'</code>.</p>
-    </div>
   </section>
 </main>
 
 <div id="modal" class="modal-back" hidden>
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-h">
-    <h3 id="modal-h">Импорт / экспорт схемы (JSON)</h3>
-    <textarea id="io-text" spellcheck="false" aria-label="Схема в формате JSON"></textarea>
+    <h3 id="modal-h">Алгоритм в формате JSON</h3>
+    <textarea id="io-text" spellcheck="false" aria-label="Алгоритм в формате JSON"></textarea>
     <div class="row">
-      <span id="io-note" class="note">Скопируйте, чтобы сохранить, или вставьте свою схему и нажмите «Загрузить».</span>
-      <button id="io-copy" class="btn">Копировать</button>
-      <button id="io-load" class="btn primary">Загрузить</button>
-      <button id="io-close" class="btn ghost">Закрыть</button>
+      <span id="io-note" class="note"></span>
+      <button id="io-copy" class="btn" type="button">Копировать</button>
+      <button id="io-load" class="btn primary" type="button">Загрузить</button>
+      <button id="io-close" class="btn ghost" type="button">Закрыть</button>
     </div>
   </div>
 </div>
 
 <script src="engine.js"></script>
+<script src="examples.js"></script>
 <script src="app.js"></script>
 <!-- ARTIFACT-BODY-END -->
 </body>

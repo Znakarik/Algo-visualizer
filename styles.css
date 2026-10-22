@@ -318,4 +318,112 @@ button { cursor: pointer; }
 .modal .note { margin-right: auto; font-size: 12px; color: var(--muted); }
 .modal .note.err { color: var(--bad); }
 
+
+/* ---------- панель сохранения ---------- */
+.savebar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  max-width: 1400px; margin: 0 auto 16px; padding: 10px 12px;
+  background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius);
+}
+.name-field { display: flex; align-items: center; gap: 8px; flex: 1 1 280px; min-width: 0; }
+.name-field .lbl, .params-panel > .lbl {
+  font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 600;
+}
+.name-field input {
+  flex: 1 1 auto; min-width: 0; border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px;
+  background: var(--bg); font-weight: 500;
+}
+.savebar select { max-width: 240px; }
+.sep { width: 1px; height: 22px; background: var(--line); }
+.save-state { font-size: 12px; color: var(--muted); }
+.save-state.dirty { color: var(--t-branch); }
+.save-state.good { color: var(--ok); }
+.save-state.err { color: var(--bad); }
+.btn.danger { color: var(--bad); border-color: var(--bad); }
+
+/* ---------- входные данные ---------- */
+.sub-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-top: 2px; }
+.sub-title { font-size: 12px; font-weight: 600; }
+.params { display: grid; gap: 6px; }
+.param-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.param-row .p-name {
+  font-family: var(--font-mono); font-size: 13px; flex: 1 1 140px; min-width: 0;
+  border: 1px solid var(--line); border-radius: 5px; padding: 5px 8px; background: var(--bg);
+}
+.param-row select, .param-row .p-value, .rule select, .rule input, .field select, .join-select {
+  font-size: 13px; border: 1px solid var(--line); border-radius: 5px; padding: 5px 6px; background: var(--bg); min-width: 0;
+}
+.param-row .p-value { flex: 0 1 140px; font-family: var(--font-mono); }
+.data-area {
+  width: 100%; resize: vertical; font-family: var(--font-mono); font-size: 12px; line-height: 1.4;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 6px 8px;
+}
+.toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; min-width: 64px; }
+.toggle input { width: 16px; height: 16px; accent-color: var(--accent); }
+.link-btn {
+  justify-self: start; border: 0; background: transparent; color: var(--accent); padding: 2px 0; font-size: 13px;
+}
+.link-btn:hover { text-decoration: underline; }
+
+/* ---------- условия ---------- */
+.cond-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.cond-caption { font-size: 13px; display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.seg button { border: 0; background: transparent; padding: 3px 10px; font-size: 12px; color: var(--muted); }
+.seg button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.rules { display: grid; gap: 4px; }
+.rule {
+  display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+  padding: 6px; border-radius: 6px; background: color-mix(in srgb, var(--bg) 70%, transparent);
+}
+.rule .operand { flex: 1 1 130px; font-family: var(--font-mono); }
+.rule .op { flex: 0 0 auto; }
+.rule .rkind { flex: 0 0 auto; color: var(--muted); }
+.rule .rvalue { flex: 1 1 90px; font-family: var(--font-mono); }
+.rule-status {
+  font-family: var(--font-mono); font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums;
+  margin-left: auto; min-width: 30px; text-align: right;
+}
+.join-chip {
+  justify-self: start; font-size: 10px; text-transform: uppercase; letter-spacing: .1em; font-weight: 600;
+  color: var(--accent); padding: 0 8px;
+}
+.block .empty { font-size: 12px; color: var(--muted); margin: 0; }
+
+/* ---------- быстрые параметры ---------- */
+.params-panel {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;
+  background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 8px 12px; margin-bottom: 10px;
+}
+.qp { display: inline-flex; align-items: center; gap: 6px; }
+.qp-name { font-family: var(--font-mono); font-size: 12px; }
+.qp .p-value { width: 100px; font-size: 13px; border: 1px solid var(--line); border-radius: 5px; padding: 3px 6px; background: var(--bg); font-family: var(--font-mono); }
+
+/* ---------- таблица элементов ---------- */
+.trace-table.items td, .trace-table.items th { white-space: nowrap; }
+.trace-table .num { color: var(--muted); }
+.trace-table .n-cell { text-align: right; }
+.trace-table tr.row-dropped td, .trace-table tr.row-fail td { background: var(--bad-soft); }
+.trace-table tr.row-dropped td:not(:nth-child(-n+2)) { opacity: .6; }
+.trace-table tr.row-kept td, .trace-table tr.row-pass td { background: var(--ok-soft); }
+.trace-table tr.row-yes td { background: var(--yes-soft); }
+.trace-table tr.row-no td { background: var(--no-soft); }
+.trace-table .rule-col { text-align: center; color: var(--accent); }
+.trace-table .rule-cell { text-align: center; font-weight: 600; }
+.trace-table .rule-cell.yes { color: var(--ok); }
+.trace-table .rule-cell.no { color: var(--bad); }
+.tag { font-family: var(--font-ui); font-size: 11px; font-weight: 600; }
+.tag.kept, .tag.pass { color: var(--ok); }
+.tag.dropped, .tag.fail { color: var(--bad); }
+.tag.yes { color: var(--yes); }
+.tag.no { color: var(--no); }
+.chip.param { background: var(--accent-soft); border-color: var(--accent); }
+.rule-legend { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.rule-legend li { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; }
+.rule-legend code, .cond-line code { font-family: var(--font-mono); background: var(--bg); padding: 1px 6px; border-radius: 4px; overflow-wrap: anywhere; }
+.rule-id { font-family: var(--font-mono); font-size: 11px; font-weight: 600; color: var(--accent); }
+.cond-line { margin: 0; font-size: 12px; }
+.cond-line .kw { color: var(--muted); }
+
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }

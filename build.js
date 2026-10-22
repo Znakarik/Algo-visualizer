@@ -18,6 +18,7 @@ const head = between(html, '<!-- ARTIFACT-HEAD-START -->', '<!-- ARTIFACT-HEAD-E
   .replace('<link rel="stylesheet" href="styles.css">', () => '<style>\n' + read('styles.css') + '\n</style>');
 const body = between(html, '<!-- ARTIFACT-BODY-START -->', '<!-- ARTIFACT-BODY-END -->')
   .replace('<script src="engine.js"></script>', () => '<script>\n' + read('engine.js') + '\n</script>')
+  .replace('<script src="examples.js"></script>', () => '<script>\n' + read('examples.js') + '\n</script>')
   .replace('<script src="app.js"></script>', () => '<script>\n' + read('app.js') + '\n</script>');
 
 // Фрагмент без <html>/<head>/<body> — для публикации как артефакт

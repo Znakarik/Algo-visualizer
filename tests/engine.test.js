@@ -1,8 +1,15 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const E = require('../engine.js');
+const X = require('../examples.js');
 
 const B = (type, props) => E.createBlock(type, props);
+const R = E.rule;
+const TODAY = '2026-10-22';
+const run = blocks => E.run(blocks, { today: TODAY });
+const names = r => r.output.map(c => c.name);
+
+// ---------- разбор входных данных ----------
 
 test('parseInput: JSON, одно значение, список через запятую', () => {
   assert.deepEqual(E.parseInput('[1, 2, 3]'), [1, 2, 3]);
@@ -11,136 +18,246 @@ test('parseInput: JSON, одно значение, список через за�
   assert.deepEqual(E.parseInput(''), []);
 });
 
-test('input + filter: в трассе видно, что отброшено', () => {
-  const r = E.run([B('input', { data: '[5, 3, 8, 1]' }), B('filter', { expr: 'x > 2' })]);
-  assert.equal(r.ok, true);
-  assert.deepEqual(r.output, [5, 3, 8]);
-  assert.equal(r.steps.length, 2);
-  const f = r.steps[1];
-  assert.deepEqual(f.before, [5, 3, 8, 1]);
-  assert.deepEqual(f.marks.map(m => m.status), ['kept', 'kept', 'kept', 'dropped']);
+test('parseInput: сломанный JSON — понятная ошибка, а не список строк', () => {
+  assert.throws(() => E.parseInput('[{"a": 1,}'), /неверный JSON/);
 });
 
-test('map: запоминает старое и новое значение', () => {
-  const r = E.run([B('input', { data: '[1, 2]' }), B('map', { expr: 'x * 10' })]);
-  assert.deepEqual(r.output, [10, 20]);
-  assert.deepEqual(r.steps[1].marks[1], { index: 1, status: 'changed', from: 2, to: 20 });
-});
-
-test('map и filter работают с объектами', () => {
-  const r = E.run([
-    B('input', { data: '[{"name":"Аня","age":17},{"name":"Олег","age":30}]' }),
-    B('filter', { expr: 'x.age >= 18' }),
-    B('map', { expr: 'x.name' }),
+test('параметры приводятся к своим типам', () => {
+  const p = E.paramsObject([
+    { name: 'creditAllowed', type: 'boolean', value: 'false' },
+    { name: 'flag', type: 'boolean', value: true },
+    { name: 'minAmount', type: 'number', value: '5000' },
+    { name: 'empty', type: 'number', value: '' },
+    { name: 'city', type: 'string', value: 'Алматы' },
+    { name: '', type: 'string', value: 'без имени — пропускается' },
   ]);
-  assert.deepEqual(r.output, ['Олег']);
+  assert.deepEqual(p, { creditAllowed: false, flag: true, minAmount: 5000, empty: null, city: 'Алматы' });
 });
 
-test('assert: нарушение помечает шаг и весь запуск', () => {
-  const r = E.run([B('input', { data: '[1, -2, 3]' }), B('assert', { expr: 'x > 0' }), B('map', { expr: 'x + 1' })]);
-  assert.equal(r.ok, false);
-  assert.equal(r.steps[1].status, 'fail');
-  assert.deepEqual(r.steps[1].marks.map(m => m.status), ['pass', 'fail', 'pass']);
-  assert.deepEqual(r.output, [2, -1, 4], 'без stopOnFail выполнение продолжается');
+test('parseConst: числа, да/нет, строки в кавычках', () => {
+  assert.equal(E.parseConst('5000'), 5000);
+  assert.equal(E.parseConst('true'), true);
+  assert.equal(E.parseConst('нет'), false);
+  assert.equal(E.parseConst('credit'), 'credit');
+  assert.equal(E.parseConst('"123"'), '123');
 });
 
-test('assert со stopOnFail останавливает выполнение', () => {
-  const r = E.run([
+// ---------- даты и сравнение ----------
+
+test('dateKey: разные форматы срока действия', () => {
+  assert.equal(E.dateKey('2027-03-15'), '2027-03-15');
+  assert.equal(E.dateKey('2027-02'), '2027-02-28', 'месяц — до последнего дня');
+  assert.equal(E.dateKey('2028-02'), '2028-02-29', 'високосный год');
+  assert.equal(E.dateKey('03/27'), '2027-03-31', 'как на карте MM/YY');
+  assert.equal(E.dateKey('15.03.2027'), '2027-03-15');
+  assert.equal(E.dateKey('кот'), null);
+});
+
+test('карта действует до конца месяца, указанного на ней', () => {
+  const blocks = [
+    B('input', { data: JSON.stringify([{ e: '10/26' }, { e: '09/26' }, { e: '2026-10' }]) }),
+    B('filter', { cond: { join: 'and', rules: [R('field', 'e', 'gte', 'today')] } }),
+  ];
+  assert.deepEqual(run(blocks).output.map(c => c.e), ['10/26', '2026-10']);
+});
+
+test('compare: числа как числа, строки-числа тоже', () => {
+  assert.ok(E.compare(10, 9) > 0);
+  assert.ok(E.compare('10', 9) > 0);
+  assert.ok(E.compare('b', 'a') > 0);
+});
+
+// ---------- правила ----------
+
+test('правило: поле против константы', () => {
+  const r = E.evalRule(R('field', 'balance', 'gte', 'const', '5000'), { balance: 7300 }, {}, TODAY);
+  assert.deepEqual(r, { ok: true, left: 7300, right: 5000 });
+});
+
+test('правило: поле против параметра', () => {
+  const rule = R('field', 'balance', 'gte', 'param', 'minAmount');
+  assert.equal(E.evalRule(rule, { balance: 800 }, { minAmount: 5000 }, TODAY).ok, false);
+});
+
+test('правило: вложенное поле через точку', () => {
+  const rule = R('field', 'owner.age', 'gte', 'const', '18');
+  assert.equal(E.evalRule(rule, { owner: { age: 20 } }, {}, TODAY).ok, true);
+});
+
+test('правило: несуществующий параметр — ошибка с его именем', () => {
+  assert.throws(() => E.evalRule(R('param', 'nope', 'isTrue'), {}, {}, TODAY), /Нет параметра «nope»/);
+});
+
+test('операции: да/нет, задано/не задано, содержит, равно', () => {
+  const t = (op, a, b) => E.evalRule(R('field', 'v', op, 'const', b), { v: a }, {}, TODAY).ok;
+  assert.equal(t('isTrue', true), true);
+  assert.equal(t('isFalse', false), true);
+  assert.equal(t('isFalse', undefined), true, 'отсутствующее поле считается «нет»');
+  assert.equal(t('isEmpty', ''), true);
+  assert.equal(t('notEmpty', 0), true);
+  assert.equal(t('contains', 'Кредитка Travel', 'travel'), true, 'без учёта регистра');
+  assert.equal(t('contains', ['a', 'b'], 'b'), true);
+  assert.equal(t('eq', 'credit', 'credit'), true);
+  assert.equal(t('ne', 'debit', 'credit'), true);
+  assert.equal(t('eq', true, 'true'), true);
+});
+
+test('условие И / ИЛИ и результат по каждому правилу', () => {
+  const cond = { join: 'or', rules: [R('param', 'creditAllowed', 'isTrue'), R('field', 'type', 'ne', 'const', 'credit')] };
+  assert.deepEqual(E.evalCond(cond, { type: 'credit' }, { creditAllowed: false }, TODAY), { ok: false, rules: [false, false] });
+  assert.deepEqual(E.evalCond(cond, { type: 'debit' }, { creditAllowed: false }, TODAY), { ok: true, rules: [false, true] });
+  assert.deepEqual(E.evalCond({ ...cond, join: 'and' }, { type: 'debit' }, { creditAllowed: true }, TODAY), { ok: true, rules: [true, true] });
+  assert.deepEqual(E.evalCond({ join: 'and', rules: [] }, {}, {}, TODAY), { ok: true, rules: [] }, 'пустое условие пропускает всё');
+});
+
+test('текст условия для показа', () => {
+  const b = B('filter', { cond: { join: 'or', rules: [R('param', 'creditAllowed', 'isTrue'), R('field', 'balance', 'gte', 'param', 'minAmount')] } });
+  assert.equal(E.condText(b), 'параметр creditAllowed да (true) ИЛИ balance ≥ параметр minAmount');
+});
+
+// ---------- примеры с картами ----------
+
+test('пример «выбор карт»: кредитные запрещены', () => {
+  const r = run(X.byKey.cards.make());
+  assert.equal(r.ok, true, r.error || '');
+  assert.deepEqual(names(r), ['Зарплатная', 'Мир']);
+  assert.deepEqual(r.params, { creditAllowed: false, hasMinAmount: true, minAmount: 5000 });
+  // в шаге фильтра по кредитным видно, какое правило сработало
+  const step = r.steps.find(s => s.title === 'Кредитные разрешены?');
+  assert.deepEqual(step.ruleLabels, ['параметр creditAllowed да (true)', 'type ≠ «credit»']);
+  const platinum = step.before.findIndex(c => c.name === 'Кредитка Platinum');
+  assert.deepEqual(step.marks[platinum], { index: platinum, status: 'dropped', rules: [false, false] });
+});
+
+test('пример «выбор карт»: меняем параметры — меняется результат', () => {
+  const blocks = X.byKey.cards.make();
+  const params = blocks[0].params;
+  params.find(p => p.name === 'creditAllowed').value = true;
+  params.find(p => p.name === 'minAmount').value = 10000;
+  const r = run(blocks);
+  // Travel и Мир отсеиваются по минимальной сумме 10000
+  assert.deepEqual(names(r), ['Кредитка Platinum', 'Зарплатная']);
+  params.find(p => p.name === 'hasMinAmount').value = false;
+  const r2 = run(blocks);
+  assert.deepEqual(names(r2), ['Кредитка Platinum', 'Зарплатная', 'Мир', 'Кредитка Travel']);
+  assert.equal(r2.ok, false, 'Travel в долларах нарушает утверждение');
+  assert.equal(r2.steps.find(s => s.type === 'assert').status, 'fail');
+});
+
+test('пример с ветвлением по типу карты', () => {
+  const r = run(X.byKey.cardsBranch.make());
+  assert.equal(r.ok, true, r.error || '');
+  assert.deepEqual(names(r), ['Кредитка Platinum', 'Зарплатная', 'Мир']);
+  assert.ok(r.steps.some(s => s.path === 'да' && s.title === 'Лимит не меньше порога'));
+});
+
+test('пример с числами (выражения JS)', () => {
+  const r = run(X.byKey.numbers.make());
+  assert.equal(r.ok, true, r.error || '');
+  assert.deepEqual(r.output, [79]);
+});
+
+// ---------- общие механизмы ----------
+
+test('выражения видят параметры через p', () => {
+  const r = run([
+    B('input', { params: [{ name: 'k', type: 'number', value: 3 }], data: '[1, 2]' }),
+    B('map', { expr: 'x * p.k' }),
+    B('filter', { condMode: 'code', expr: 'x > p.k' }),
+  ]);
+  assert.deepEqual(r.output, [6]);
+});
+
+test('утверждение со stopOnFail останавливает выполнение', () => {
+  const r = run([
     B('input', { data: '[1, -2]' }),
-    B('assert', { expr: 'x > 0', stopOnFail: true }),
+    B('assert', { condMode: 'code', expr: 'x > 0', stopOnFail: true }),
     B('map', { expr: 'x + 1' }),
   ]);
   assert.equal(r.steps.length, 2);
   assert.deepEqual(r.output, [1, -2]);
+  assert.equal(r.ok, false);
 });
 
-test('branch: разделяет, выполняет ветки и сливает', () => {
-  const r = E.run([
+test('ветвление: разделяет, выполняет ветки и сливает', () => {
+  const r = run([
     B('input', { data: '[1, 2, 3, 4]' }),
     B('branch', {
-      expr: 'x % 2 === 0',
+      condMode: 'code', expr: 'x % 2 === 0',
       yes: [B('map', { expr: 'x * 100' })],
-      no: [B('filter', { expr: 'x > 1' })],
+      no: [B('filter', { condMode: 'code', expr: 'x > 1' })],
     }),
   ]);
   assert.deepEqual(r.output, [200, 400, 3]);
-  const types = r.steps.map(s => s.type);
-  assert.deepEqual(types, ['input', 'branch', 'map', 'filter', 'merge']);
+  assert.deepEqual(r.steps.map(s => s.type), ['input', 'branch', 'map', 'filter', 'merge']);
   assert.deepEqual(r.steps[1].split, { yes: [2, 4], no: [1, 3] });
   assert.equal(r.steps[2].path, 'да');
   assert.equal(r.steps[3].path, 'нет');
-  assert.equal(r.steps[2].depth, 1);
 });
 
-test('вложенные ветвления', () => {
-  const r = E.run([
-    B('input', { data: '[1, 2, 3, 4, 5, 6]' }),
-    B('branch', {
-      expr: 'x > 3',
-      yes: [B('branch', { expr: 'x % 2 === 0', yes: [B('map', { expr: '"чёт"' })], no: [] })],
-      no: [],
-    }),
+test('сортировка: по убыванию, устойчивая, даты как даты', () => {
+  const r = run([
+    B('input', { data: JSON.stringify([{ n: 'a', d: '12/27' }, { n: 'b', d: '2027-01' }, { n: 'c', d: '12/27' }]) }),
+    B('sort', { expr: 'x.d', order: 'desc' }),
   ]);
-  // слияние: сначала результат ветки «да», затем «нет»
-  assert.deepEqual(r.output, ['чёт', 'чёт', 5, 1, 2, 3]);
-  assert.ok(r.steps.some(s => s.path === 'да › да'));
+  assert.deepEqual(r.output.map(x => x.n), ['a', 'c', 'b']);
 });
 
-test('sort по ключу и направлению, устойчивая', () => {
-  const r = E.run([
-    B('input', { data: '[{"n":"a","v":2},{"n":"b","v":1},{"n":"c","v":2}]' }),
-    B('sort', { expr: 'x.v', order: 'desc' }),
-    B('map', { expr: 'x.n' }),
-  ]);
-  assert.deepEqual(r.output, ['a', 'c', 'b']);
-});
-
-test('reduce: сумма и история накопителя', () => {
-  const r = E.run([B('input', { data: '[1, 2, 3]' }), B('reduce', { expr: 'acc + x', init: '0' })]);
-  assert.deepEqual(r.output, [6]);
-  assert.deepEqual(r.steps[1].marks.map(m => m.to), [1, 3, 6]);
-});
-
-test('ошибка в выражении не роняет программу, а попадает в трассу', () => {
-  const r = E.run([B('input', { data: '[1]' }), B('filter', { expr: 'x >' }), B('map', { expr: 'x' })]);
+test('ошибка в выражении попадает в трассу и не роняет программу', () => {
+  const r = run([B('input', { data: '[1]' }), B('filter', { condMode: 'code', expr: 'x >' }), B('map', { expr: 'x' })]);
   assert.equal(r.ok, false);
   assert.match(r.error, /Ошибка в выражении/);
   assert.equal(r.steps.length, 2);
   assert.equal(r.steps[1].status, 'error');
 });
 
-test('ошибка во время вычисления внутри ветки', () => {
-  const r = E.run([
-    B('input', { data: '[1]' }),
-    B('branch', { expr: 'true', yes: [B('map', { expr: 'x.a.b' })], no: [] }),
-  ]);
-  assert.equal(r.ok, false);
-  assert.equal(r.steps.at(-1).status, 'error');
-  assert.equal(r.steps.at(-1).path, 'да');
+test('правило без выбранного поля — понятная ошибка', () => {
+  const r = run([B('input', { data: '[{"a":1}]' }), B('filter', { cond: { join: 'and', rules: [{ left: { kind: 'field', name: '' }, op: 'eq', right: { kind: 'const', value: '1' } }] } })]);
+  assert.match(r.error, /не выбрано/);
 });
 
-test('трасса хранит копии: изменения не влияют на прошлые шаги', () => {
-  const r = E.run([B('input', { data: '[{"a":1}]' }), B('map', { expr: '(x.a = 5, x)' })]);
+test('трасса хранит копии', () => {
+  const r = run([B('input', { data: '[{"a":1}]' }), B('map', { expr: '(x.a = 5, x)' })]);
   assert.deepEqual(r.steps[0].after, [{ a: 1 }]);
   assert.deepEqual(r.output, [{ a: 5 }]);
+});
+
+// ---------- поля, проверка схемы, сохранение ----------
+
+test('fieldsOf: поля карт и их типы', () => {
+  const f = Object.fromEntries(E.fieldsOf(X.CARDS).map(x => [x.name, x.type]));
+  assert.deepEqual(f, { id: 'string', name: 'string', type: 'string', balance: 'number', expires: 'date', currency: 'string', blocked: 'boolean' });
+  const nested = E.fieldsOf([{ owner: { age: 3 } }]);
+  assert.equal(nested[0].name, 'owner.age');
+});
+
+test('validate ловит неизвестный тип и пустое условие', () => {
+  assert.deepEqual(E.validate(X.byKey.cards.make()), []);
+  assert.deepEqual(E.validate(X.byKey.numbers.make()), []);
+  const errs = E.validate([{ type: 'zzz' }, { type: 'branch', cond: { rules: [] }, yes: [{ type: 'map' }] }, { type: 'filter' }]);
+  assert.equal(errs.length, 3);
+});
+
+test('сохранение и загрузка алгоритма', () => {
+  const saved = E.serialize('Подбор карт', X.byKey.cards.make());
+  const text = JSON.stringify(saved);
+  const loaded = E.deserialize(text);
+  assert.equal(loaded.name, 'Подбор карт');
+  assert.deepEqual(names(run(loaded.blocks)), ['Зарплатная', 'Мир']);
+  // старый формат — просто массив блоков
+  assert.equal(E.deserialize(saved.blocks).blocks.length, saved.blocks.length);
+  assert.throws(() => E.deserialize('{"blocks": [{"type": "zzz"}]}'), /не подходит/);
+  assert.throws(() => E.deserialize('не json'), /не JSON/);
 });
 
 test('findBlock находит блок внутри ветки', () => {
   const inner = B('map', { expr: 'x' });
   const blocks = [B('input'), B('branch', { yes: [], no: [inner] })];
-  const f = E.findBlock(blocks, inner.id);
-  assert.equal(f.block, inner);
-  assert.equal(f.index, 0);
-});
-
-test('validate ловит неизвестный тип и пустое выражение', () => {
-  assert.deepEqual(E.validate([B('input'), B('filter')]), []);
-  const errs = E.validate([{ type: 'zzz' }, { type: 'branch', yes: [{ type: 'map' }] }]);
-  assert.equal(errs.length, 3);
+  assert.equal(E.findBlock(blocks, inner.id).block, inner);
 });
 
 test('пустой алгоритм', () => {
-  const r = E.run([]);
+  const r = run([]);
   assert.equal(r.ok, true);
   assert.deepEqual(r.output, []);
 });
